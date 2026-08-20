@@ -622,9 +622,8 @@ function TemplateViewer({
     // (or template.name as a fallback). `.docx` is appended by Syncfusion
     // because the FormatType passed below is 'Docx'.
     let baseName = 'Document';
-    if (template.docxUrl) {
-      const tail = template.docxUrl.split('/').pop() || '';
-      baseName = tail.replace(/\.docx$/i, '').trim() || baseName;
+    if (template.name) {
+      baseName = template.name.trim() || baseName;
     } else {
       const nm = (template.name || 'template').replace(/\.[^.]+$/, '').trim();
       baseName = nm.replace(/[^A-Za-z0-9-_]+/g, '_').replace(/^_+|_+$/g, '') || 'Document';

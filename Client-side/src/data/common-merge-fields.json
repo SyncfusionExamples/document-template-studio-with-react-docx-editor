@@ -2,7 +2,8 @@
   "fields": {
     "SignDate": true,
     "NewName": true,
-    "OrganizationCity": true
+    "OrganizationCity": true,
+    "DonorCity": true
   },
-  "updatedAt": "2026-08-20T11:24:39.464Z"
+  "updatedAt": "2026-08-20T14:38:12.438Z"
 }

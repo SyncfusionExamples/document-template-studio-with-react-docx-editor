@@ -181,7 +181,7 @@ function MergeFieldsPanel({
           scrollable panel so the action is always reachable. */}
       <footer className="ts-fields-foot">
         <p className="ts-fields-hint-foot">
-          Need a new field? Add a custom one — saved into this template’s JSON, or globally for all templates.
+          Need a new field? Add a custom one — saved into this template or globally for all templates.
         </p>
         <ButtonComponent
           cssClass="e-primary e-block ts-btn-add-field"

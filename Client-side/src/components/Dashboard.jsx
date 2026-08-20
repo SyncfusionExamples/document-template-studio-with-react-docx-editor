@@ -89,7 +89,7 @@ function Dashboard({ templates, onOpen, onAdd, onUpload, onDelete, isUploading }
                 onClick={(e) => { e.stopPropagation(); }}
               >
                 <ButtonComponent
-                  iconCss="e-icons e-delete-1"
+                  iconCss="e-icons e-trash"
                   cssClass="e-flat ts-thumb-delete"
                   title={`Remove ${t.name}`}
                   aria-label={`Remove ${t.name}`}

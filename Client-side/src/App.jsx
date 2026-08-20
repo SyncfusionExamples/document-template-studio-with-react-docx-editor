@@ -111,22 +111,6 @@ function App() {
   const handleOpen = useCallback((id) => setSelectedId(id), []);
   const handleBack = useCallback(() => setSelectedId(null), []);
 
-  // ---- Publish flow (first-time "Save and Publish" for a blank template) ----
-  // When the user clicks "Save and Publish" on a template that has never
-  // been published yet (no `docxUrl`, has `seedLines`), TemplateViewer
-  // surfaces this dialog so the user can confirm/correct the name and
-  // pick a Category (Type) before the .docx lands on disk. On confirm:
-  //   1. TemplateViewer serializes the editor and POSTs the SFDT to the
-  //      backend's Save endpoint via the publishExecute callback below.
-  //   2. App.jsx rewrites the template's catalog entry to set
-  //      `docxUrl: /Templates/<slug>.docx`, drop `seedLines`, refresh
-  //      name/type/description, and stamp an `updatedAt`. The existing
-  //      `useEffect([templates])` then writes the catalog to disk via
-  //      PUT /studio-api/catalog, so a reload picks up `docxUrl` and
-  //      loads the published .docx from wwwroot/Templates/.
-  // The dialog is modeled after the Upload dialog, but the Browse row
-  // is disabled and labeled "From current document" because the .docx
-  // is the editor's content — there is no separate user file to pick.
   const publishDialogRef = useRef(null);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState(null); // template being published
