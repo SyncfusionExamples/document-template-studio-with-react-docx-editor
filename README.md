@@ -24,35 +24,6 @@ Users can:
 
 ## Key Features
 
-### Template Studio Dashboard
-
-The dashboard provides a thumbnail-based template gallery. Each template
-displays its name, category, description, and thumbnail.
-
-Available sample templates include:
-
-  -----------------------------------------------------------------------
-  Template                Category                Purpose
-  ----------------------- ----------------------- -----------------------
-  Donation Thank-You      Thank You               Thank donors for their
-  Letter                                          contributions and
-                                                  support.
-
-  Donation Official Tax   Tax Receipt             Provide official tax
-  Receipt                                         receipts for donor
-                                                  contributions.
-
-  Donor Impact Letter     General                 Share the impact of
-                                                  donors' contributions
-                                                  and express
-                                                  appreciation for their
-                                                  support.
-
-  Pledge Payment Reminder Invoice                 Remind donors about
-                                                  upcoming or outstanding
-                                                  pledge payments.
-  -----------------------------------------------------------------------
-
 ### DOCX Template Editing
 
 Selecting a template opens it directly in the Syncfusion Document
@@ -100,71 +71,12 @@ and JSON merge data to the server.
 The ASP.NET Core server uses Syncfusion DocIO to execute the mail merge
 and converts the resulting DOCX back to SFDT for display in the Document
 Editor.
-
-The merge request contains:
-
-``` json
-{
-  "fileName": "Pledge Payment Reminder.docx",
-  "documentData": "<BASE64 DOCX CONTENT>",
-  "mailMergeData": "{\"Organization\":[{\"OrgName\":\"ABC Foundation\",\"DonorName\":\"John Smith\",\"PledgeNumber\":\"PLG-2026-0042\",\"OutstandingAmount\":\"$1,000.00\"}]}"
-}
-```
-
-The JSON structure is collection-based so the same approach can be used
-for different templates and multiple records.
-
-## Project Structure
-
-``` text
-Documents Template Studio
-│
-├── Client-side/
-│   ├── public/
-│   ├── src/
-│   │   ├── assets/
-│   │   ├── components/
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── MergeFieldsPanel.jsx
-│   │   │   ├── Sidebar.jsx
-│   │   │   └── TemplateViewer.jsx
-│   │   ├── data/
-│   │   │   ├── common-merge-fields.json
-│   │   │   ├── sampleTemplates.js
-│   │   │   ├── templates.json
-│   │   │   └── user-templates/
-│   │   ├── utils/
-│   │   │   ├── merge.js
-│   │   │   ├── studioStorage.js
-│   │   │   └── thumbnailGenerator.js
-│   │   ├── App.jsx
-│   │   ├── App.css
-│   │   ├── index.css
-│   │   └── main.jsx
-│   ├── vite-plugin-studio-templates.js
-│   ├── vite.config.js
-│   └── package.json
-│
-└── Server-side/
-    ├── Controllers/
-    │   └── DocumentEditorController.cs
-    ├── wwwroot/
-    │   └── Templates/
-    ├── DocumentTemplateStudioService.csproj
-    ├── DocumentTemplateStudioService.sln
-    ├── Program.cs
-    └── Properties/
-        └── launchSettings.json
-```
-
 ## Prerequisites
 
 ### Client
 
 -   Node.js
 -   npm
--   A modern web browser such as Microsoft Edge, Google Chrome, or
-    Firefox.
 
 ### Server
 
@@ -308,55 +220,13 @@ prepares it for Syncfusion DocIO Mail Merge processing.
 
 The main Document Editor endpoints used by the sample are:
 
-  --------------------------------------------------------------------------
-  Endpoint                               Purpose
-  -------------------------------------- -----------------------------------
-  `POST /api/DocumentEditor/Import`      Imports a DOCX and converts it to
-                                         SFDT.
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/DocumentEditor/Import` | Imports a DOCX and converts it to SFDT. |
+| `POST /api/DocumentEditor/Save` | Saves the edited SFDT content as a DOCX template. |
+| `POST /api/DocumentEditor/MailMerge` | Executes Mail Merge using the supplied JSON data and returns SFDT. |
 
-  `POST /api/DocumentEditor/Save`        Saves the edited SFDT content as a
-                                         DOCX template.
-
-  `POST /api/DocumentEditor/MailMerge`   Executes Mail Merge using the
-                                         supplied JSON data and returns
-                                         SFDT.
-  --------------------------------------------------------------------------
-
-The server-side Mail Merge request model is:
-
-``` csharp
-public class ExportData
-{
-    public string fileName { get; set; }
-    public string documentData { get; set; }
-    public string mailMergeData { get; set; }
-}
-```
-
-## Template Storage
-
-Built-in and uploaded DOCX templates are maintained as part of the
-sample's template catalog and template storage.
-
-Server-side DOCX templates are stored under:
-
-``` text
-Server-side/wwwroot/Templates/
-```
-
-Client-side template metadata is maintained in:
-
-``` text
-Client-side/src/data/templates.json
-```
-
-Common merge fields are maintained in:
-
-``` text
-Client-side/src/data/common-merge-fields.json
-```
-
-# Resources
+## Resources
 
 - **Product page:**   [Syncfusion® React DOCX Editor](https://www.syncfusion.com/docx-editor-sdk/react-docx-editor?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples) 
 
@@ -364,12 +234,12 @@ Client-side/src/data/common-merge-fields.json
 
 - **Online demo:**   [Syncfusion® React DOCX Editor - Online demo](https://document.syncfusion.com/demos/docx-editor/react/#/tailwind3/document-editor/default?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples) 
 
-# Support and feedback 
+## Support and feedback 
 
 For any other queries, reach our [Syncfusion® support team](https://support.syncfusion.com/?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples) or post the queries through the [community forums](https://www.syncfusion.com/forums?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples). 
 
 Request new feature through [Syncfusion® feedback portal](https://www.syncfusion.com/feedback?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples). 
 
-# License
+## License
 
 This is a commercial product and requires a paid license for possession or use Syncfusion's licensed software, including this component, is subject to the terms and conditions of [Syncfusion's EULA](https://www.syncfusion.com/license/studio/34.1.29/syncfusion_essential_studio_eula.pdf?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples). You can purchase a licnense [here](https://www.syncfusion.com/sales/products?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples) or start a free 30\-day trial [here](https://www.syncfusion.com/account/manage-trials/start-trials?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples). 
