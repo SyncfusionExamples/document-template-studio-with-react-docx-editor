@@ -1,0 +1,1312 @@
+/* =====================================================================
+   Template Studio — layout shell
+   Two-column app: sidebar | main (editor + embedded merge fields panel)
+   The Merge Fields panel now lives inside the TemplateViewer, so the
+   .ts-viewer header (ts-header) spans across the editor canvas and the
+   side panel combined.
+   ===================================================================== */
+
+.ts-app {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: #f4f5f8;
+  color: #1f2330;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+.ts-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ---------- Sidebar ---------- */
+.ts-sidebar {
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ts-sidebar-head {
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid #eef0f3;
+}
+.ts-sidebar-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.ts-subtitle {
+  margin: 2px 0 12px;
+  font-size: 12px;
+  color: #6b7280;
+}
+/* Syncfusion TextBoxComponent search input in the sidebar */
+.ts-search.e-control-wrapper,
+.ts-search.e-input-group {
+  width: 100%;
+}
+
+.ts-toolbar {
+  padding: 8px 12px;
+  border-bottom: 1px solid #eef0f3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ts-toolbar .e-control-wrapper,
+.ts-toolbar .e-btn {
+  width: 100%;
+}
+.ts-btn-primary {
+  width: 100%;
+}
+.ts-btn-upload.e-btn {
+  width: 100%;
+  color: #3d5afe;
+  border-color: #c7d0ff;
+}
+.ts-btn-upload.e-btn:hover { background: #f5f7ff; }
+
+/* ---------- Generic buttons ---------- */
+/* Syncfusion ButtonComponent styles scoped by custom cssClass hook */
+.ts-btn-primary.e-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #3d5afe;
+  color: #ffffff;
+  border-color: #3d5afe;
+}
+.ts-btn-primary.e-btn:hover { background: #3043e0; }
+
+.ts-icon-btn.e-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  font-size: 13px;
+}
+.ts-icon-btn.e-btn:hover { background: #fdecec; color: #d6336c; }
+
+/* Save Template button in the viewer header */
+.ts-btn-save.e-btn {
+  flex-shrink: 0;
+}
+/* Download button (sits next to the Save button in the viewer header) */
+.ts-btn-download.e-btn {
+  flex-shrink: 0;
+}
+
+/* Syncfusion Dialog — anchor inside .ts-app so dialogs render in-app */
+.ts-app .e-dlg-container,
+.ts-app .e-dialog {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ---------- Upload Template dialog layout ----------
+   Restore generous, balanced spacing inside the Syncfusion Dialog. By
+   default the dialog content has asymmetric padding (no top padding), the
+   header butts against the edges, and the form below is cramped. These
+   scoped overrides fix all three problems for the #ts-upload-dialog. */
+/* Header: tighten the row, brand the title, balance the bottom divider. */
+#ts-upload-dialog .e-dlg-header-content {
+  padding: 16px 20px 12px;
+}
+#ts-upload-dialog .e-dlg-header {
+  padding: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2330;
+}
+/* Body content area: consistent padding on all four sides. */
+#ts-upload-dialog .e-dlg-content {
+  padding: 16px 20px 20px;
+}
+/* Footer actions row sits inside the body block here, so push it away
+   from the last input by bumping top margin and adding a soft divider
+   that matches the header's. */
+#ts-upload-dialog .ts-dialog-actions {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid #eef0f3;
+}
+
+/* ---------- Template tree ---------- */
+.ts-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 6px 12px;
+}
+
+/* Group sections: each template category gets its own header with a
+   colored dot, label, and a small count badge. Templates list below. */
+.ts-tree-group {
+  margin-bottom: 10px;
+}
+.ts-tree-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+}
+.ts-tree-group-head .ts-type-dot {
+  width: 7px;
+  height: 7px;
+}
+.ts-tree-group-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ts-tree-group-count {
+  background: #f1f2f6;
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  min-width: 18px;
+  text-align: center;
+}
+.ts-tree-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ts-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 2px;
+  transition: background 0.12s;
+}
+.ts-tree-row:hover { background: #f3f4f6; }
+.ts-tree-row.is-selected { background: #eef0ff; }
+.ts-tree-row.is-selected .ts-tree-name { color: #3d5afe; }
+
+.ts-file-icon { font-size: 16px; line-height: 1; }
+.ts-tree-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.ts-tree-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f2330;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ts-type-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.ts-empty {
+  padding: 16px 12px;
+  color: #9ca3af;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* =====================================================================
+   Document viewer (Word-like)
+   The .ts-viewer is now a two-row column layout:
+     1. .ts-viewer-head  (ts-header) — spans the FULL width of the body
+        grid (i.e. across the document editor canvas AND the merge
+        fields side panel), so the header visually covers both columns.
+     2. .ts-viewer-body — a two-column grid: editor canvas (left) and
+        the embedded Merge Fields panel (right).
+   ===================================================================== */
+.ts-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #f4f5f8;
+  min-height: 0;
+}
+
+.ts-viewer-empty {
+  align-items: center;
+  justify-content: center;
+}
+.ts-welcome {
+  text-align: center;
+  color: #6b7280;
+}
+.ts-welcome h2 {
+  color: #1f2330;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* ts-header — spans across the editor canvas + the Merge Fields side
+   panel (full width of the .ts-viewer-body grid below). */
+.ts-viewer-head {
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* Body: editor canvas + embedded merge fields panel. The header above
+   spans this whole grid (see .ts-viewer-head), so the ts-header visually
+   extends along both the document editor part and the side panel. */
+.ts-viewer-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  min-height: 0;
+}
+
+/* Editor canvas column — holds the DocumentEditorContainer + status bar. */
+.ts-viewer-canvas {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.ts-viewer-title h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.ts-viewer-title p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+.ts-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Back-to-dashboard button in the viewer header (Syncfusion ButtonComponent) */
+.ts-back.e-btn {
+  margin-bottom: 4px;
+  padding: 0 8px;
+  background: transparent;
+  color: #3d5afe;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+}
+.ts-back.e-btn:hover { text-decoration: underline; }
+
+/* View / Edit segmented control (Syncfusion ButtonComponent styled as a pill) */
+.ts-seg {
+  display: inline-flex;
+  background: #f1f2f6;
+  border-radius: 6px;
+  padding: 2px;
+}
+.ts-seg-btn.e-btn {
+  border: none;
+  background: transparent;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  border-radius: 4px;
+}
+.ts-seg-btn.e-btn.is-active {
+  background: #ffffff;
+  color: #3d5afe;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* =====================================================================
+   Dashboard (thumbnail grid) — shown when no template is opened
+   ===================================================================== */
+.ts-dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #f4f5f8;
+  overflow: auto;
+}
+.ts-dashboard-head {
+  padding: 24px 32px 8px;
+}
+.ts-dashboard-head h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.ts-dashboard-head p {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+.ts-thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  padding: 16px 32px 32px;
+}
+.ts-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  border-top: 4px solid var(--ts-thumb-color, #5c3eb1);
+  cursor: pointer;
+  text-align: left;
+  transition: box-shadow 0.15s, border-color 0.15s, transform 0.1s;
+  font-family: inherit;
+  color: inherit;
+  position: relative;
+}
+.ts-thumb:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+}
+/* Trash button on a dashboard card. Positioned over the top-right corner.
+   The wrapper span captures the click to stop it bubbling to the card div
+   (which would open the editor); the card's onClick also guards with a
+   closest() check as a belt-and-suspenders defence. */
+.ts-thumb-delete-wrap {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+}
+.ts-thumb-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  color: #6b7280;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.12s, background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ts-thumb:hover .ts-thumb-delete {
+  opacity: 1;
+}
+.ts-thumb-delete:hover {
+  background: #fdecec;
+  color: #d6336c;
+  border-color: #f5b8c4;
+}
+.ts-thumb-delete .e-icons {
+  font-size: 13px;
+}
+.ts-thumb-new {
+  align-items: center;
+  justify-content: center;
+  border-top-color: #6b7280;
+  border-style: dashed;
+  background: #fafbfc;
+  min-height: 220px;
+}
+.ts-thumb-upload {
+  align-items: center;
+  justify-content: center;
+  border-top-color: #3d5afe;
+  border-style: dashed;
+  background: #f5f7ff;
+  min-height: 220px;
+}
+.ts-thumb-upload:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+.ts-thumb-new-icon {
+  font-size: 38px;
+  font-weight: 300;
+  color: #6b7280;
+  line-height: 1;
+}
+.ts-thumb-art {
+  width: 100%;
+  /* Fixed-height art area so the name/type/description rows line up
+     uniformly across every card regardless of the thumbnail's intrinsic
+     dimensions. The image (or placeholder) is centered inside this box. */
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+  box-sizing: border-box;
+}
+.ts-thumb-art svg {
+  width: 96px;
+  height: 120px;
+}
+/* Rendered DOCX page image (client-side thumbnail of the .docx file). */
+.ts-thumb-art-image {
+  padding: 0;
+}
+.ts-thumb-art-image img {
+  display: block;
+  /* Fill the fixed art box: cap dims so every card's image renders in the
+     same footprint, with consistent centering. */
+  width: auto;
+  height: auto;
+  max-width: 168px;
+  max-height: 188px;
+  object-fit: contain;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  margin: 0 auto;
+}
+/* Placeholder shown while the .docx thumbnail is being generated. */
+.ts-thumb-art-placeholder {
+  padding: 4px 0;
+  display: flex;
+  justify-content: center;
+}
+.ts-thumb-placeholder-doc {
+  width: 96px;
+  height: 120px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.ts-thumb-placeholder-line {
+  height: 6px;
+  border-radius: 2px;
+  background: #e5e7eb;
+}
+.ts-thumb-placeholder-line:nth-child(1) { width: 70%; background: var(--ts-thumb-color, #5c3eb1); opacity: 0.6; }
+.ts-thumb-placeholder-line:nth-child(2) { width: 100%; }
+.ts-thumb-placeholder-line:nth-child(3) { width: 90%; }
+.ts-thumb-placeholder-line:nth-child(4) { width: 60%; }
+.ts-thumb-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2330;
+  /* Keep cards aligned: truncate long template names with an ellipsis.
+     The full name is surfaced via the native title tooltip on hover. */
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ts-thumb-type {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #6b7280;
+}
+.ts-thumb-desc {
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.4;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Upload-template details dialog form. */
+.ts-upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  /* The form is a direct child of the Syncfusion dialog element, so it
+     is responsible for ALL the inner left/right inset the user sees.
+     Use a comfortable 16px gutter so input fields don't butt against the
+     dialog's left/right edges; the inset is also symmetric (top + bottom
+       + left + right = 16px box so the dialog card body has balanced
+     breathing room on every side. */
+  padding: 16px 16px 16px;
+}
+
+/* Field labels — give each one breathing room from the field above and
+   a tight margin to its own field below. */
+.ts-upload-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2330;
+  margin-top: 14px;
+  margin-bottom: 6px;
+  display: block;
+}
+.ts-upload-label:first-child { margin-top: 0; }
+.ts-upload-form .e-control-wrapper,
+.ts-upload-form .e-input-group,
+.ts-upload-form .e-ddl {
+  width: 100%;
+}
+/* Ensure the ComboBox (and its wrapping span) fill the dialog width with
+   consistent padding so the dropdown arrow sits aligned with the other
+   fields and is fully clickable (no missing right margin). */
+.ts-upload-form .ts-upload-combobox,
+.ts-upload-form .ts-upload-combobox.e-control-wrapper,
+.ts-upload-form .ts-upload-combobox .e-input-group {
+  width: 100%;
+  margin: 0;
+  display: block;
+}
+/* The ComboBox wrapper must match the TextBox wrapper's height so the
+   field aligns with the rows above/below it. Force a single-line height
+   and prevent the icon/clear-button from stacking vertically. */
+.ts-upload-form .ts-upload-combobox.e-input-group {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+/* The text input inside the ComboBox should fill the available width
+   minus the icon, matching the TextBox input. The TextBox's horizontal
+   padding is 0px (its input sits flush with the wrapper's left edge), so
+   we zero the ComboBox input's horizontal padding too and remove the
+   wrapper's horizontal padding so the typed text starts at the SAME x
+   as the Name/Purpose text above/below it. */
+.ts-upload-form .ts-upload-combobox input.e-control,
+.ts-upload-form .ts-upload-combobox input.e-input {
+  flex: 1 1 auto;
+  width: auto !important;
+  min-width: 0;
+  height: 22px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  box-sizing: border-box;
+}
+/* Match the TextBox wrapper: no horizontal padding (the Material theme's
+   underlined input already provides the visual rhythm). */
+.ts-upload-form .ts-upload-combobox.e-input-group {
+  padding: 0;
+}
+/* The dropdown arrow icon must be a small fixed-width box on the right —
+   NOT a full-width block. Syncfusion sometimes lets it grow to 100%;
+   pin it down here. */
+.ts-upload-form .ts-upload-combobox .e-input-group-icon {
+  flex: 0 0 auto;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+/* The clear (×) button inside the ComboBox must also be a small icon,
+   not a full-width block. */
+.ts-upload-form .ts-upload-combobox .e-clear-icon {
+  flex: 0 0 auto;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+/* The hidden <select> Syncfusion injects for the ComboBox must not affect
+   layout — force it off-flow. */
+.ts-upload-form .ts-upload-combobox .e-ddl-hidden {
+  display: none !important;
+}
+
+/* .docx file picker row inside the Upload Template dialog: shows the
+   chosen filename (truncated) + a Browse button. */
+.ts-upload-file-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+.ts-upload-file-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #1f2330;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ts-upload-browse.e-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border-radius: 6px;
+  border: 1px solid #3d5afe;
+  color: #3d5afe;
+  background: #ffffff;
+  padding: 0 16px;
+}
+.ts-upload-browse.e-btn:hover {
+  background: #f5f7ff;
+  border-color: #3043e0;
+}
+
+/* Free-text Category input (with existing categories offered via a
+   <datalist>). Styled to match the Syncfusion TextBoxComponent fields above
+   so the dialog looks consistent. Same treatment for any plain input we
+   render inside the upload form. */
+.ts-upload-input {
+  width: 100%;
+  height: 32px;
+  padding: 4px 10px;
+  border: 1px solid #c8c8c8;
+  border-radius: 4px;
+  background: #ffffff;
+  font: 14px 'Segoe UI', system-ui, sans-serif;
+  color: #1f2330;
+}
+.ts-upload-input:focus {
+  outline: none;
+  border-color: #3d5afe;
+  box-shadow: 0 0 0 2px rgba(61, 90, 254, 0.15);
+}
+.ts-upload-file {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Dialog action buttons row — used by the Upload Template + Delete Template
+   dialogs. We render the buttons as custom dialog children (NOT via the
+   Syncfusion `buttons` prop) so React onClick handlers fire reliably and
+   we fully control the alignment via flexbox. */
+.ts-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 4px;
+}
+.ts-dialog-text {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #374151;
+}
+
+/* Syncfusion DocumentEditor container wrapper — let it fill remaining height.
+   The container renders its own Word-like toolbar (no manual menu buttons). */
+.ts-viewer-canvas > .e-documenteditor-container,
+.ts-viewer-canvas > .e-control.e-documenteditor-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: none;
+}
+
+/* =====================================================================
+   Merge fields panel (right)
+   The panel now lives inside .ts-viewer-body (a grid item in the right
+   column); it fills that column's full height.
+   ===================================================================== */
+.ts-fields-panel {
+  background: #ffffff;
+  border-left: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.ts-fields-head {
+  padding: 16px;
+  border-bottom: 1px solid #eef0f3;
+}
+.ts-fields-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.ts-fields-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+.ts-fields-hint {
+  padding: 8px 16px;
+  margin: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fafbfc;
+}
+.ts-fields-groups {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ts-field-group h4 {
+  margin: 14px 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9ca3af;
+}
+.ts-field-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ts-field-group li { margin-bottom: 6px; }
+
+.ts-field-chip.e-btn {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 6px;
+  cursor: pointer;
+  height: auto;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ts-field-chip.e-btn:hover {
+  border-color: #3d5afe;
+  background: #f5f7ff;
+}
+.ts-field-chip.e-btn .e-btn-text {
+  text-align: left;
+}
+.ts-field-chip-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2330;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ts-field-chip-repeat {
+  font-size: 9px;
+  background: #fff3cd;
+  color: #997404;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.ts-field-chip-sample {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* =====================================================================
+   Add Field footer + dialog
+   The footer sticks to the bottom of the side panel; the dialog is a
+   modal overlay rendered inside the .ts-fields-panel.
+   ===================================================================== */
+.ts-fields-foot {
+  border-top: 1px solid #eef0f3;
+  padding: 10px 12px 12px;
+  background: #fafbfc;
+  flex-shrink: 0;
+}
+.ts-fields-hint-foot {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #6b7280;
+}
+.ts-btn-add-field.e-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #3d5afe;
+  color: #ffffff;
+  border-color: #3d5afe;
+  font-weight: 500;
+}
+.ts-btn-add-field.e-btn:hover { background: #3043e0; border-color: #3043e0; }
+.ts-btn-add-field.e-btn:disabled { background: #c7d0ff; border-color: #c7d0ff; }
+
+/* Modal overlay — covers the side panel only (not the whole app) so the
+   editor + status bar remain visible behind it. */
+.ts-add-field-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 18, 28, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px 12px;
+  overflow-y: auto;
+}
+/* The panel must be the positioning context for the overlay. */
+.ts-fields-panel { position: relative; }
+.ts-add-field-dialog {
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+}
+.ts-add-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #eef0f3;
+}
+.ts-add-field-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.ts-add-field-close {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.ts-add-field-close:hover { background: #f3f4f6; color: #1f2330; }
+
+.ts-add-field-form {
+  padding: 14px 16px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ts-add-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ts-add-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.ts-input,
+.ts-add-field-form input[type="text"],
+.ts-add-field-form select {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #1f2330;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  font-family: inherit;
+}
+.ts-input:focus,
+.ts-add-field-form input[type="text"]:focus,
+.ts-add-field-form select:focus {
+  border-color: #3d5afe;
+  box-shadow: 0 0 0 2px rgba(61, 90, 254, 0.18);
+}
+.ts-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #6b7280;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-top: 2px;
+}
+
+.ts-add-field-scope {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 4px;
+  background: #fafbfc;
+}
+.ts-add-field-scope legend {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+  padding: 0 4px;
+}
+.ts-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: #1f2330;
+}
+.ts-radio input[type="radio"] { margin-top: 2px; accent-color: #3d5afe; }
+.ts-radio strong { font-weight: 600; }
+.ts-radio em { font-style: normal; color: #6b7280; font-size: 11px; }
+.ts-radio input[type="radio"]:disabled + span { opacity: 0.5; }
+
+.ts-add-field-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #1f2330;
+}
+.ts-add-field-checkbox input[type="checkbox"] { accent-color: #3d5afe; }
+.ts-add-field-repeat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  background: #fafbfc;
+}
+.ts-add-field-error {
+  margin: 0;
+  padding: 6px 8px;
+  background: #fdecec;
+  color: #b42318;
+  border: 1px solid #f5b8c4;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.ts-add-field-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* =====================================================================
+   Preview-with-Data (Mail Merge) dialog
+   Mirrors the .ts-add-field-* overlay pattern so both native HTML modals
+   share the same look-and-feel. Anchored to the .ts-viewer so it sits on
+   top of the editor + side panel.
+   ===================================================================== */
+.ts-viewer { position: relative; }
+.ts-preview-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 18, 28, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 1100;
+  padding: 28px 12px;
+  overflow-y: auto;
+}
+.ts-preview-dialog {
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 56px);
+}
+.ts-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #eef0f3;
+}
+.ts-preview-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2330;
+}
+.ts-preview-close {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.ts-preview-close:hover { background: #f3f4f6; color: #1f2330; }
+.ts-preview-close:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.ts-preview-body {
+  padding: 14px 16px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ts-preview-field-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  background: #f3f4ff;
+  border: 1px solid #c7d0ff;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #1f2330;
+}
+.ts-preview-field-hint strong {
+  color: #3d5afe;
+  font-weight: 600;
+}
+.ts-preview-field-hint span {
+  color: #1f2330;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
+}
+
+/* File-pick row: the actual <input type=file> is hidden (we trigger it
+   from a styled Browse button); the picked filename is shown next to
+   the button. */
+.ts-preview-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ts-preview-file-input {
+  /* Visually hidden but still clickable via the ref'd .click() call. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.ts-preview-browse.e-btn {
+  flex-shrink: 0;
+}
+.ts-preview-file-name {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 12px;
+  color: #1f2330;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  padding: 6px 10px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ts-preview-file-name:empty::before {
+  content: "No file chosen";
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.ts-preview-example {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+  background: #fafbfc;
+  font-size: 12px;
+}
+.ts-preview-example summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #3d5afe;
+  padding: 2px 0 4px;
+  outline: none;
+}
+.ts-preview-example summary:hover { text-decoration: underline; }
+.ts-preview-example pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #1f2330;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.ts-preview-error {
+  margin: 0;
+  padding: 6px 8px;
+  background: #fdecec;
+  color: #b42318;
+  border: 1px solid #f5b8c4;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.ts-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid #eef0f3;
+}
+.ts-btn-preview.e-btn {
+  flex-shrink: 0;
+}
+
+/* =====================================================================
+   Merge badge inserted inside editable document
+   ===================================================================== */
+.merge-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 1px;
+  background: #eef0ff;
+  color: #3d5afe;
+  border: 1px solid #c7d0ff;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  cursor: default;
+  vertical-align: baseline;
+}
+.merge-badge:hover { background: #e0e6ff; }
+
+/* =====================================================================
+   Document body styles (the actual letter content / Word content)
+   ===================================================================== */
+.doc-letter { color: #1f2330; }
+.doc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid #1f2330;
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+}
+.doc-org-name { font-size: 18px; font-weight: 700; }
+.doc-invoice-meta { text-align: right; font-size: 12px; }
+.doc-invoice-meta h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  color: #d6336c;
+}
+.doc-billto { margin-bottom: 16px; font-size: 13px; }
+.doc-label { font-size: 10px; color: #9ca3af; letter-spacing: 0.08em; }
+.doc-name { font-weight: 600; }
+
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 16px;
+  font-size: 12px;
+}
+.doc-table th,
+.doc-table td {
+  border: 1px solid #d1d5db;
+  padding: 6px 8px;
+  text-align: left;
+}
+.doc-table th {
+  background: #f3f4f6;
+  font-weight: 600;
+}
+.doc-table .num { text-align: right; }
+.doc-table tfoot td { font-weight: 600; background: #fafbfc; }
+
+.doc-note { font-size: 11px; color: #6b7280; margin-top: 12px; }
+.doc-sign { margin-top: 24px; }
+.doc-date { font-size: 12px; color: #6b7280; }
+
+/* =====================================================================
+   Responsive — collapse panels on narrow screens
+   ===================================================================== */
+@media (max-width: 1100px) {
+  .ts-app {
+    grid-template-columns: 240px 1fr;
+  }
+  /* Narrow the merge fields panel on mid-size screens since it's now
+     embedded inside the viewer body grid. */
+  .ts-viewer-body {
+    grid-template-columns: 1fr 280px;
+  }
+  .ts-page { width: 100%; min-height: auto; padding: 40px 32px; }
+}
+@media (max-width: 860px) {
+  .ts-app {
+    grid-template-columns: 220px 1fr;
+  }
+  /* The body grid collapses to a single column (editor only); the merge
+     fields panel is hidden on narrow screens. */
+  .ts-viewer-body {
+    grid-template-columns: 1fr;
+  }
+  .ts-fields-panel { display: none; }
+}

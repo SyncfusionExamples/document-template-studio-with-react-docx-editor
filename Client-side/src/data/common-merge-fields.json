@@ -1,0 +1,15 @@
+{
+  "fields": {
+    "SignDate": {
+      "label": "Sign Date",
+      "group": "Custom",
+      "sample": "2026-08-19"
+    },
+    "NewName": {
+      "label": "New Name",
+      "group": "Custom",
+      "sample": ""
+    }
+  },
+  "updatedAt": "2026-08-19T14:59:18.081Z"
+}
