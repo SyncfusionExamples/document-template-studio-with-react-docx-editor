@@ -16,28 +16,14 @@ import MergeFieldsPanel from './MergeFieldsPanel.jsx';
 //   - template-scoped custom fields (key -> true), derived at runtime from
 //     `template.fieldKeys` (any key not in MERGE_FIELDS is treated as a
 //     custom field) plus any new fields added via the "Add Field" UI.
-//   - common (global) custom fields (key -> true), fetched once from
-//     /studio-api/common-fields and reused across templates.
+//   - common (global) custom fields (key -> true). The Common catalog is
+//     owned by App (which loads it from the dev server on startup and
+//     forwards it down as a prop) so that every TemplateViewer sees the
+//     same source of truth and new common fields are immediately visible
+//     across all templates (and persist across reloads — the server
+//     writes them to src/data/common-merge-fields.json).
 // Both are exposed to the MergeFieldsPanel as `customFieldMap` so newly
 // added fields are immediately insertable in the editor.
-const COMMON_FIELDS_CACHE = { value: null, promise: null };
-
-async function loadCommonFields() {
-  if (COMMON_FIELDS_CACHE.value) return COMMON_FIELDS_CACHE.value;
-  if (COMMON_FIELDS_CACHE.promise) return COMMON_FIELDS_CACHE.promise;
-  COMMON_FIELDS_CACHE.promise = (async () => {
-    try {
-      const mod = await import('../utils/studioStorage.js');
-      const map = await mod.fetchCommonMergeFields();
-      COMMON_FIELDS_CACHE.value = map || {};
-      return COMMON_FIELDS_CACHE.value;
-    } catch {
-      COMMON_FIELDS_CACHE.value = {};
-      return {};
-    }
-  })();
-  return COMMON_FIELDS_CACHE.promise;
-}
 
 // TemplateViewer: a Word-like editor built on Syncfusion's DocumentEditor.
 // Opens every template directly in Edit mode (no separate View/Edit toggle).
@@ -56,7 +42,18 @@ async function loadCommonFields() {
 //                          Downloads folder (browser-side save-as).
 // The DocumentEditorContainer ships with its own built-in toolbar
 // (enableToolbar) so we render NO manual formatting menu buttons.
-function TemplateViewer({ template, onThumbnailUpdated, onBack }) {
+function TemplateViewer({
+  template,
+  onThumbnailUpdated,
+  onBack,
+  commonFields: commonFieldsProp = {},
+  onCommonFieldAdded = () => {},
+  onTemplateFieldKeyAdded = () => {},
+  onRequestPublish = () => {},
+  registerPublishExecutor = () => {},
+  onPublished = () => {},
+  existingCategories: _existingCategories = [],
+}) {
   const editorRef = useRef(null);
   const saveDialogRef = useRef(null);
   // dirty = the document has unsaved edits. The Save button is disabled
@@ -169,16 +166,10 @@ function TemplateViewer({ template, onThumbnailUpdated, onBack }) {
   // { <key>: true } for every `fieldKeys` entry that's NOT already in the
   // built-in MERGE_FIELDS catalog (so user-added template-scoped fields
   // are recognized by the panel + insertField lookups). Plus the
-  // `commonFields` map (globally-scoped custom fields served by
-  // /studio-api/common-fields), loaded once + cached.
-  const [commonFields, setCommonFields] = useState({});
+  // `commonFields` map (globally-scoped custom fields), which is owned by
+  // App and forwarded down as a prop so the same source of truth is
+  // shared across every TemplateViewer.
   const [customFieldMap, setCustomFieldMap] = useState({});
-  // Load common fields once on mount.
-  useEffect(() => {
-    let cancelled = false;
-    loadCommonFields().then((m) => { if (!cancelled) setCommonFields(m || {}); });
-    return () => { cancelled = true; };
-  }, []);
   // Reset session-added custom fields whenever the template changes.
   useEffect(() => {
     // Seed the customFieldMap from the template's fieldKeys: any key not
@@ -196,28 +187,33 @@ function TemplateViewer({ template, onThumbnailUpdated, onBack }) {
   // persisted. Updates the in-memory map so the chip appears immediately,
   // appends the key to the current template's fieldKeys (so the field
   // counts toward "Fields in template" in the status bar and is remembered
-  // for the rest of the session), and refreshes the common-fields cache
-  // when the scope is "common".
+  // for the rest of the session), and refreshes App's common-fields
+  // catalog when the scope is "common" so every template sees it.
   const handleCustomFieldAdded = (info) => {
     setCustomFieldMap((prev) => ({ ...prev, [info.key]: info.field }));
     if (info.scope === 'common') {
-      setCommonFields((prev) => ({ ...prev, [info.key]: info.field }));
-      // Keep the shared cache in sync so other templates pick it up.
-      COMMON_FIELDS_CACHE.value = { ...(COMMON_FIELDS_CACHE.value || {}), [info.key]: info.field };
+      // Forward to App so the global commonFields state (and every other
+      // template that opens afterwards) picks up the new key. The
+      // already-rendered panel sees it via the commonFieldsProp below.
+      onCommonFieldAdded(info.key, info.field);
     }
     if (info.scope === 'template' && Array.isArray(info.fieldKeys) && template) {
       // Mirror the new fieldKeys onto the in-memory template object so
       // MergeFieldsPanel (which reads template.fieldKeys directly) sees
-      // the freshly-added chip for the rest of the session.
+      // the freshly-added chip for the rest of the session, and tell App
+      // so the templates.json catalog reflects the new fieldKeys too.
       template.fieldKeys = info.fieldKeys;
+      onTemplateFieldKeyAdded(template.id, info.fieldKeys);
     }
   };
 
   // Combined custom-field lookup passed to the panel: per-template first,
   // then common, so per-template entries can override a common one.
+  // The "common" half comes from App (so it's shared across templates and
+  // survives reloads via the server-persisted common-merge-fields.json).
   const combinedCustomFields = useMemo(
-    () => ({ ...commonFields, ...customFieldMap }),
-    [commonFields, customFieldMap],
+    () => ({ ...commonFieldsProp, ...customFieldMap }),
+    [commonFieldsProp, customFieldMap],
   );
 
   // Insert a merge field at the current caret using the editor's API.
@@ -229,7 +225,7 @@ function TemplateViewer({ template, onThumbnailUpdated, onBack }) {
   const insertField = (key) => {
     const inst = editorRef.current;
     if (!inst) return;
-    const f = MERGE_FIELDS[key] || customFieldMap[key] || commonFields[key];
+    const f = MERGE_FIELDS[key] || customFieldMap[key] || commonFieldsProp[key];
     if (!f) return;
     let fieldName = key
         .replace(/\n/g, "")
@@ -254,18 +250,107 @@ function TemplateViewer({ template, onThumbnailUpdated, onBack }) {
   //      via onThumbnailUpdated so the dashboard reflects the saved state.
   // The Vite dev plugin's /studio-api/save is intentionally NOT used for
   // this flow — we talk to the authoritative backend directly.
+  //
+  // First-time publish gate: when the template has not been published
+  // yet (no `docxUrl`, has `seedLines` — i.e. a freshly "+ New Template"
+  // doc still in `openBlank()` state), the user must confirm the file
+  // name and Category before the .docx lands on disk. We surface the
+  // publish dialog in App.jsx via `onRequestPublish`, which collects
+  // the name + category and then calls back into `publishExecuteRef`
+  // to do the actual Save. The dialog's confirmPublish handler in
+  // App.jsx updates `templates.json` afterwards (sets `docxUrl`, drops
+  // `seedLines`) so a reload loads from wwwroot/Templates/.
   const [isSaving, setIsSaving] = useState(false);
+  // Hold a "pending publish" target so the dialog's confirm step can
+  // pick it up. While this is non-null, the dirty flag is cleared as
+  // soon as the dialog confirms the publish (the user has explicitly
+  // chosen to publish via the dialog, so the document is in sync with
+  // what will land on disk).
+  const publishExecuteRef = useRef(null);
+
+  // Register the publish-execute function with App.jsx so the publish
+  // dialog's confirm handler can call into the editor to do the Save.
+  // The function returns { docxBaseName, thumbnailDataUri } which the
+  // dialog uses to update templates.json.
+  useEffect(() => {
+    registerPublishExecutor(async ({ name }) => {
+      const inst = editorRef.current;
+      if (!inst) throw new Error('Editor is not ready.');
+      const de = inst.documentEditor;
+      // 1. Serialize.
+      let sfdtContent = '';
+      try {
+        sfdtContent = de.serialize();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('serialize SFDT failed:', err);
+        throw new Error('Could not serialize the document. Please try again.');
+      }
+      if (!sfdtContent) {
+        throw new Error('Document serialized to an empty payload.');
+      }
+      // 2. Build the slug. We use a timestamp suffix to guarantee
+      //    uniqueness on first-publish (so a second "+ New Template"
+      //    saved with the same name never overwrites the wrong file).
+      //    Subsequent saves use the same slug (held in template.docxUrl)
+      //    so the editor reopens the right file.
+      const base = (name || template.name || 'template').replace(/\.[^.]+$/, '').trim();
+      const slug = `${base.replace(/[^A-Za-z0-9-_]+/g, '_').replace(/^_+|_+$/g, '') || 'template'}-${Date.now().toString(36)}`;
+      const saveResult = await saveTemplateToServer({
+        sfdtContent,
+        documentName: slug,
+        format: 'Docx',
+      });
+      // eslint-disable-next-line no-console
+      console.log(`[studio] "${template.name}" published via DocumentEditorController.Save -> ${saveResult.fileName}.docx`);
+      // 3. Refresh thumbnail so the dashboard reflects the published
+      //    content without waiting for App.jsx's effect to re-render.
+      let thumbnailDataUri = '';
+      try {
+        const { generateThumbnailFromEditor } = await import('../utils/thumbnailGenerator.js');
+        const out = await generateThumbnailFromEditor(de);
+        thumbnailDataUri = out.thumbnailDataUri || '';
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('thumbnail refresh failed:', err);
+      }
+      // 4. Clear the editor's dirty flag so the Save button disables
+      //    again — the document is now in sync with disk.
+      setDirty(false);
+      // Notify App.jsx so it can show a confirmation toast/dialog
+      // (and the templates state is updated outside this callback).
+      onPublished({ docxBaseName: saveResult.fileName || slug, thumbnailDataUri });
+      return { docxBaseName: saveResult.fileName || slug, thumbnailDataUri };
+    });
+    return () => {
+      // Clear on unmount so a previous viewer's executor doesn't linger
+      // in App.jsx's ref.
+      registerPublishExecutor(null);
+    };
+  }, [template?.id, registerPublishExecutor, onPublished]);
+
+  // The Save button entry point. When the template has already been
+  // published (docxUrl present), we save directly to the same slug.
+  // When the template has NOT been published yet (fresh "+ New
+  // Template" with seedLines), we open the publish dialog so the user
+  // can confirm/correct the name + category. App.jsx's publish dialog
+  // calls back into `publishExecuteRef` to do the actual Save.
   async function handleSave() {
     const inst = editorRef.current;
     if (!inst) return;
-    const de = inst.documentEditor;
+    // First-time publish: open the dialog and let App.jsx drive the
+    // actual save + catalog update.
+    if (!template.docxUrl) {
+      onRequestPublish(template);
+      return;
+    }
     setIsSaving(true);
     try {
       // 1. Serialize the document to SFDT JSON (the format the backend's
       //    Save endpoint expects in `Content`).
       let sfdtContent = '';
       try {
-        sfdtContent = de.serialize();
+        sfdtContent = inst.documentEditor.serialize();
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('serialize SFDT failed:', err);
@@ -313,7 +398,7 @@ function TemplateViewer({ template, onThumbnailUpdated, onBack }) {
       let thumbnailDataUri = '';
       try {
         const { generateThumbnailFromEditor } = await import('../utils/thumbnailGenerator.js');
-        const out = await generateThumbnailFromEditor(de);
+        const out = await generateThumbnailFromEditor(inst.documentEditor);
         thumbnailDataUri = out.thumbnailDataUri || '';
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -640,6 +725,7 @@ function TemplateViewer({ template, onThumbnailUpdated, onBack }) {
           onInsertField={insertField}
           customFieldMap={combinedCustomFields}
           onCustomFieldAdded={handleCustomFieldAdded}
+          commonFieldsProp={commonFieldsProp}
         />
       </div>
 

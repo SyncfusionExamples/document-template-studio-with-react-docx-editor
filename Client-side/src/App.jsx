@@ -20,6 +20,7 @@ import {
   saveTemplatesCatalog,
   getHiddenBuiltInIds,
   hideBuiltInTemplate,
+  fetchCommonMergeFields,
 } from './utils/studioStorage.js';
 import './App.css';
 
@@ -49,6 +50,21 @@ function App() {
   const [selectedId, setSelectedId] = useState(null);
   const deleteDialogRef = useRef(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+
+  // Global (common) merge-field catalog, loaded once at app startup from
+  // the dev server. The same source of truth is forwarded to every
+  // TemplateViewer so that adding a common field on one template is
+  // immediately visible in every other template's panel and persists
+  // across reloads (the server writes to src/data/common-merge-fields.json).
+  // `commonFields` is a flat { key: true } map of recognized keys.
+  const [commonFields, setCommonFields] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    fetchCommonMergeFields().then((m) => {
+      if (!cancelled) setCommonFields(m || {});
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Reference to the latest TemplateViewer save fn, set by the viewer when
   // it mounts. Used by App so the toolbar Save button can live anywhere.
@@ -94,6 +110,122 @@ function App() {
   // Open a template from the dashboard (or sidebar) in the editor.
   const handleOpen = useCallback((id) => setSelectedId(id), []);
   const handleBack = useCallback(() => setSelectedId(null), []);
+
+  // ---- Publish flow (first-time "Save and Publish" for a blank template) ----
+  // When the user clicks "Save and Publish" on a template that has never
+  // been published yet (no `docxUrl`, has `seedLines`), TemplateViewer
+  // surfaces this dialog so the user can confirm/correct the name and
+  // pick a Category (Type) before the .docx lands on disk. On confirm:
+  //   1. TemplateViewer serializes the editor and POSTs the SFDT to the
+  //      backend's Save endpoint via the publishExecute callback below.
+  //   2. App.jsx rewrites the template's catalog entry to set
+  //      `docxUrl: /Templates/<slug>.docx`, drop `seedLines`, refresh
+  //      name/type/description, and stamp an `updatedAt`. The existing
+  //      `useEffect([templates])` then writes the catalog to disk via
+  //      PUT /studio-api/catalog, so a reload picks up `docxUrl` and
+  //      loads the published .docx from wwwroot/Templates/.
+  // The dialog is modeled after the Upload dialog, but the Browse row
+  // is disabled and labeled "From current document" because the .docx
+  // is the editor's content — there is no separate user file to pick.
+  const publishDialogRef = useRef(null);
+  const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
+  const [publishTarget, setPublishTarget] = useState(null); // template being published
+  const [publishName, setPublishName] = useState('');
+  const [publishCategory, setPublishCategory] = useState('General');
+  const [publishPurpose, setPublishPurpose] = useState('');
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishError, setPublishError] = useState('');
+  // TemplateViewer fills this in when the user opens the editor so the
+  // publish dialog's "OK" handler can call back into it to run the real
+  // Save. Returns a promise that resolves to { docxBaseName, thumbnailDataUri }.
+  const publishExecuteRef = useRef(null);
+  // Confirmation dialog shown after a successful first-time publish.
+  // (The editor's own saveDialogRef is local to the editor instance, so
+  // we drive a sibling dialog here. We keep this small surface so the
+  // user gets the same "Template published" feedback as for subsequent
+  // saves.)
+  const publishedDialogRef = useRef(null);
+  const [showPublishedDialog, setShowPublishedDialog] = useState(false);
+  const [publishedDialogName, setPublishedDialogName] = useState('');
+  // When the user closes the confirmation, scroll back to the dashboard.
+  const [lastPublishedId, setLastPublishedId] = useState(null);
+
+  // Open the publish dialog for a given template. Called by
+  // TemplateViewer when the user clicks "Save and Publish" on a template
+  // that has not been published yet.
+  const handleRequestPublish = useCallback((tpl) => {
+    if (!tpl) return;
+    setPublishTarget(tpl);
+    setPublishName(tpl.name || '');
+    setPublishCategory(tpl.type || 'General');
+    setPublishPurpose(tpl.description || '');
+    setPublishError('');
+    setIsPublishDialogOpen(true);
+    publishDialogRef.current?.show();
+  }, []);
+
+  const cancelPublish = useCallback(() => {
+    publishDialogRef.current?.hide();
+    setIsPublishDialogOpen(false);
+    setPublishTarget(null);
+    setPublishError('');
+  }, []);
+
+  const confirmPublish = useCallback(async () => {
+    if (!publishTarget) return;
+    if (!publishName.trim()) {
+      setPublishError('Template name is required.');
+      return;
+    }
+    setPublishError('');
+    setIsPublishing(true);
+    try {
+      // Ask TemplateViewer to do the actual Save (it owns the editor
+      // instance + the saveTemplateToServer call). The execute function
+      // is expected to return the slug it saved to, plus an optional
+      // refreshed thumbnail.
+      if (typeof publishExecuteRef.current !== 'function') {
+        throw new Error('Editor is not ready — please try again.');
+      }
+      const { docxBaseName, thumbnailDataUri } = await publishExecuteRef.current({
+        name: publishName.trim(),
+        // The category is informational; the saved .docx is named after
+        // `name`, not after the category. The backend Save endpoint
+        // derives the on-disk filename from FileName only.
+        category: publishCategory.trim() || 'General',
+      });
+      const slug = docxBaseName;
+      // Rework the in-memory template: stamp docxUrl so the dashboard
+      // and the next "Save and Publish" both read it from disk, drop
+      // seedLines (the file is now the source of truth), refresh
+      // name/type/description, and bump updatedAt.
+      setTemplates((prev) => prev.map((t) => {
+        if (t.id !== publishTarget.id) return t;
+        const next = {
+          ...t,
+          name: publishName.trim(),
+          type: (publishCategory || '').trim() || 'General',
+          description: (publishPurpose || '').trim() || t.description,
+          docxUrl: `/Templates/${slug}.docx`,
+          updatedAt: new Date().toISOString(),
+        };
+        // The blank template is now backed by an on-disk file — drop
+        // the in-memory seed so the editor reloads from the file.
+        delete next.seedLines;
+        if (thumbnailDataUri) next.thumbnailUrl = thumbnailDataUri;
+        return next;
+      }));
+      // The existing useEffect([templates]) hook writes the catalog to
+      // disk via PUT /studio-api/catalog, so reload picks up docxUrl.
+      cancelPublish();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Publish failed:', err);
+      setPublishError(err?.message || String(err));
+    } finally {
+      setIsPublishing(false);
+    }
+  }, [publishTarget, publishName, publishCategory, publishPurpose, cancelPublish]);
 
   // ----- Persist the template collection back to disk -----
   // templates.json is the single source of truth on the client side and
@@ -338,6 +470,28 @@ function App() {
             template={selected}
             onThumbnailUpdated={handleThumbnailUpdated}
             onBack={handleBack}
+            commonFields={commonFields}
+            onCommonFieldAdded={(key, field) => {
+              setCommonFields((prev) => ({ ...prev, [key]: field }));
+            }}
+            onTemplateFieldKeyAdded={(templateId, newFieldKeys) => {
+              setTemplates((prev) => prev.map((t) =>
+                t.id === templateId ? { ...t, fieldKeys: newFieldKeys } : t,
+              ));
+            }}
+            onRequestPublish={handleRequestPublish}
+            registerPublishExecutor={(fn) => { publishExecuteRef.current = fn; }}
+            onPublished={() => {
+              // The editor's publish executor has already cleared the
+              // dirty flag and refreshed the thumbnail. Show the same
+              // "Template published" dialog used by subsequent saves.
+              // The actual templates-state update is handled by
+              // confirmPublish so a reload picks up docxUrl.
+              setPublishedDialogName(publishName.trim() || (selected && selected.name) || '');
+              setLastPublishedId(selected ? selected.id : null);
+              setShowPublishedDialog(true);
+            }}
+            existingCategories={existingCategories}
           />
         ) : (
           <Dashboard
@@ -469,6 +623,142 @@ function App() {
             cssClass="e-danger e-primary"
             onClick={confirmDelete}
           >Delete</ButtonComponent>
+        </div>
+      </DialogComponent>
+
+      {/* Publish dialog: opens when the user clicks "Save and Publish" on
+          a template that has never been published yet (no `docxUrl`, has
+          `seedLines`). It is modeled after the Upload dialog so the user
+          can confirm the template name and pick a Category/Type. The
+          Browse row is disabled and labeled "From current document"
+          because the .docx is the editor's content — there is no
+          separate user file to pick. On confirm, the editor serializes
+          its current content and POSTs the SFDT to the backend's
+          DocumentEditorController.Save endpoint; App.jsx then rewrites
+          the template's catalog entry to set docxUrl (and drop
+          seedLines), so a reload loads the published .docx from
+          wwwroot/Templates/ via the existing /studio-api catalog write. */}
+      <DialogComponent
+        ref={publishDialogRef}
+        id="ts-publish-dialog"
+        header="Save and Publish"
+        showCloseIcon
+        visible={false}
+        target=".ts-app"
+        width="480px"
+        animationSettings={{ effect: 'Zoom', duration: 200 }}
+        close={cancelPublish}
+      >
+        {isPublishDialogOpen && (
+        <div className="ts-upload-form">
+          {/* .docx file picker — disabled here. The .docx comes from the
+              live editor (it has just been edited by the user), so there
+              is no separate user file to pick. The Browse button is shown
+              but disabled, matching the Upload dialog's shape. */}
+          <label className="ts-upload-label">Template file (.docx)</label>
+          <div className="ts-upload-file-row">
+            <span
+              className="ts-upload-file-name"
+              title="The .docx is the current editor content"
+            >
+              {publishTarget
+                ? `From current document (${publishTarget.name || 'untitled'})`
+                : 'From current document'}
+            </span>
+            <ButtonComponent
+              iconCss="e-icons e-folder-open"
+              cssClass="e-outline ts-upload-browse"
+              disabled
+            >Browse</ButtonComponent>
+          </div>
+          <label className="ts-upload-label" htmlFor="ts-publish-name">Template name</label>
+          <TextBoxComponent
+            id="ts-publish-name"
+            placeholder="e.g. Annual Appeal Letter"
+            value={publishName}
+            input={(e) => setPublishName(e.value ?? '')}
+            floatLabelType="Never"
+            disabled={isPublishing}
+          />
+          <label className="ts-upload-label" htmlFor="ts-publish-category">Category</label>
+          <ComboBoxComponent
+            id="ts-publish-category"
+            cssClass="ts-upload-combobox"
+            dataSource={existingCategories}
+            value={publishCategory || 'General'}
+            allowCustom={true}
+            allowFiltering={true}
+            placeholder="Select or type a new category"
+            floatLabelType="Never"
+            change={(e) => setPublishCategory(e.value ?? 'General')}
+            input={(e) => setPublishCategory(e.value ?? '')}
+            enabled={!isPublishing}
+          />
+          <label className="ts-upload-label" htmlFor="ts-publish-purpose">Purpose</label>
+          <TextBoxComponent
+            id="ts-publish-purpose"
+            placeholder="Very short description shown on the card"
+            value={publishPurpose}
+            input={(e) => setPublishPurpose(e.value ?? '')}
+            floatLabelType="Never"
+            disabled={isPublishing}
+          />
+          {publishError && <p className="ts-dialog-text ts-publish-error">{publishError}</p>}
+          <div className="ts-dialog-actions">
+            <ButtonComponent
+              cssClass="e-flat"
+              onClick={cancelPublish}
+              disabled={isPublishing}
+            >Cancel</ButtonComponent>
+            <ButtonComponent
+              cssClass="e-primary"
+              onClick={confirmPublish}
+              disabled={isPublishing}
+              iconCss={isPublishing ? 'e-icons e-refresh' : 'e-icons e-save'}
+            >{isPublishing ? 'Publishing…' : 'Publish'}</ButtonComponent>
+          </div>
+        </div>
+        )}
+      </DialogComponent>
+
+      {/* Confirmation dialog shown after a successful first-time publish.
+          Mirrors the inline saveDialogRef used by the editor so the user
+          gets a consistent "Template published" feedback, and gives them
+          a one-click "Back to dashboard" affordance. */}
+      <DialogComponent
+        ref={publishedDialogRef}
+        id="ts-published-dialog"
+        header="Template published"
+        showCloseIcon
+        visible={showPublishedDialog}
+        target=".ts-app"
+        width="360px"
+        animationSettings={{ effect: 'Zoom', duration: 200 }}
+        close={() => { setShowPublishedDialog(false); }}
+      >
+        <p className="ts-dialog-text">
+          {publishedDialogName
+            ? `"${publishedDialogName}" has been published to wwwroot/Templates.`
+            : 'The template has been published to wwwroot/Templates.'}
+        </p>
+        <div className="ts-dialog-actions">
+          <ButtonComponent
+            cssClass="e-flat"
+            onClick={() => { setShowPublishedDialog(false); }}
+          >Stay</ButtonComponent>
+          <ButtonComponent
+            cssClass="e-primary"
+            onClick={() => {
+              setShowPublishedDialog(false);
+              // Return to dashboard so the user sees the new card in
+              // the list (with its refreshed thumbnail). The template's
+              // docxUrl is now set, so on next reopen it loads from
+              // wwwroot/Templates/ via fetchSfdtFromDocx.
+              if (lastPublishedId) {
+                setSelectedId(null);
+              }
+            }}
+          >Back to dashboard</ButtonComponent>
         </div>
       </DialogComponent>
     </div>

@@ -4,7 +4,7 @@ namespace DocumentTemplateStudioService
     public class Program
     {
         internal static string webRootPath;
-        
+
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);

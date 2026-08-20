@@ -380,11 +380,25 @@ async function handleAddMergeField(req, res) {
 
   if (scope === 'common') {
     // Persist into a shared catalog file. Schema: { fields: { Key: true } }
+    // Always normalize to `true` so the on-disk shape stays consistent
+    // (an earlier version of the app wrote { label, group, sample }
+    // objects here; if those entries survived into the current file we
+    // simply overwrite them with `true` on the next add, so the catalog
+    // converges on the flat shape that the rest of the app expects).
     let catalog = { fields: {} };
     try {
       catalog = JSON.parse(await fs.readFile(COMMON_FIELDS_FILE, 'utf8'));
       if (!catalog.fields || typeof catalog.fields !== 'object') catalog.fields = {};
     } catch { /* missing -> start fresh */ }
+    // Drop any non-truthy garbage entries (e.g. a stray null that a
+    // previous write might have left behind) so the lookup in
+    // MergeFieldsPanel.listFields stays clean.
+    for (const k of Object.keys(catalog.fields)) {
+      if (!catalog.fields[k] || typeof catalog.fields[k] !== 'object') continue;
+      // Old shape { label, group, sample } — drop the metadata and keep
+      // just the recognition flag.
+      catalog.fields[k] = true;
+    }
     catalog.fields[key] = field;
     catalog.updatedAt = new Date().toISOString();
     await fs.writeFile(COMMON_FIELDS_FILE, JSON.stringify(catalog, null, 2));

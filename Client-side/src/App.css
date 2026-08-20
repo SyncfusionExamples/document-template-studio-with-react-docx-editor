@@ -735,6 +735,14 @@
   line-height: 1.5;
   color: #374151;
 }
+.ts-publish-error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0 4px;
+}
 
 /* Syncfusion DocumentEditor container wrapper — let it fill remaining height.
    The container renders its own Word-like toolbar (no manual menu buttons). */

@@ -9,15 +9,33 @@ import { addCustomMergeField } from '../utils/studioStorage.js';
 // added at runtime. Since fields are now just their names, custom fields
 // are stored as `true` (recognized) just like the built-ins, so no extra
 // metadata (label/group/sample/repeat) is needed downstream.
-function listFields(fieldKeys, customMap) {
+//
+// IMPORTANT: the panel must show every recognized field, not just the
+// ones that happen to be in `fieldKeys`. `fieldKeys` is the set of
+// fields the current template "owns" (used by Preview / Mail Merge),
+// but the user can also pick a common (global) field and insert it
+// into ANY template. Without the union below, a common field would
+// only appear in a template's panel after the user explicitly added it
+// at "template" scope for that template. We union fieldKeys with the
+// commonFieldsProp so every global field is available everywhere.
+function listFields(fieldKeys, customMap, commonFieldsProp) {
   const out = [];
-  for (const k of fieldKeys) {
-    // A field is shown iff it's recognized in the base catalog or in the
-    // runtime custom map. Dangling field names the editor can't insert
-    // are silently dropped.
-    if (MERGE_FIELDS[k] || (customMap && customMap[k])) {
-      out.push({ key: k });
-    }
+  const seen = new Set();
+  const push = (k) => {
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ key: k });
+  };
+  // 1. Template-scoped keys (built-in or template-custom) — preserve
+  //    the original order from `fieldKeys`.
+  for (const k of (fieldKeys || [])) {
+    if (MERGE_FIELDS[k] || (customMap && customMap[k])) push(k);
+  }
+  // 2. Common (global) keys — appended after the template's own fields
+  //    so they show up in every template's panel and persist across
+  //    reloads (loaded from common-merge-fields.json at app startup).
+  for (const k of Object.keys(commonFieldsProp || {})) {
+    if (MERGE_FIELDS[k] || (customMap && customMap[k])) push(k);
   }
   return out;
 }
@@ -29,10 +47,18 @@ function listFields(fieldKeys, customMap) {
 // The dialog only collects two things:
 //   - Save to (Template vs Common)
 //   - Field Name (the new identifier; no separate label/sample/group/repeat)
-function MergeFieldsPanel({ template, onInsertField, customFieldMap, onCustomFieldAdded }) {
+function MergeFieldsPanel({
+  template,
+  onInsertField,
+  customFieldMap,
+  onCustomFieldAdded,
+  commonFieldsProp = {},
+}) {
   const fields = useMemo(
-    () => (template ? listFields(template.fieldKeys, customFieldMap) : []),
-    [template, customFieldMap],
+    () => (template
+      ? listFields(template.fieldKeys, customFieldMap, commonFieldsProp)
+      : []),
+    [template, customFieldMap, commonFieldsProp],
   );
 
   // ----- Add-Field dialog state -----
@@ -143,6 +169,11 @@ function MergeFieldsPanel({ template, onInsertField, customFieldMap, onCustomFie
                     </ButtonComponent>
                   </li>
                 ))}
+                {fields.length === 0 && (
+                  <p className="ts-empty">
+                    No merge fields yet. Use the <strong>Add Field</strong> button below to add one.
+                  </p>
+                )}
         </div>
       )}
 
