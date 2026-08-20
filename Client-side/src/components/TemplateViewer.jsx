@@ -772,12 +772,6 @@ function TemplateViewer({
             </header>
 
             <div className="ts-preview-body">
-              <div className="ts-preview-field-hint">
-                <strong>Fields in this template:</strong>
-                <span>{template.fieldKeys && template.fieldKeys.length
-                  ? template.fieldKeys.join(', ')
-                  : '(no merge fields)'}</span>
-              </div>
 
               <div className="ts-preview-file-row">
                 <input

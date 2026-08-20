@@ -6,8 +6,7 @@ Documents Template Studio is a React functional sample that provides a
 centralized workspace for creating, managing, and editing DOCX document
 templates using the Syncfusion<sup style="font-size:70%">&reg;</sup> [React DOCX Editor](https://www.syncfusion.com/docx-editor-sdk/react-docx-editor?utm_source=github&utm_medium=listing&utm_campaign=github-github-documenteditor-examples) (Document Editor).
 
-The sample is designed for donor-management and donation-processing
-scenarios where organizations need reusable templates for donor
+The sample is designed for where organizations need reusable templates for donor
 communications, receipts, reminders, and impact letters.
 
 Users can:
@@ -19,14 +18,14 @@ Users can:
 -   Create a new blank template.
 -   Upload an existing DOCX template.
 -   Customize and save templates.
--   Preview a template using Mail Merge JSON data.
+-   Execute mail merge with a JSON data source and preview the merged document.
 -   Remove templates from the application.
 
 ## Key Features
 
 ### DOCX Template Editing
 
-Selecting a template opens it directly in the Syncfusion Document
+Selecting a template opens it directly in the Syncfusion DOCX
 Editor.
 
 Users can customize the document using standard Word-like editing
@@ -68,9 +67,8 @@ Server-side/wwwroot/Templates/
 The **Preview with Mail Merge** action sends the current DOCX content
 and JSON merge data to the server.
 
-The ASP.NET Core server uses Syncfusion DocIO to execute the mail merge
-and converts the resulting DOCX back to SFDT for display in the Document
-Editor.
+The ASP.NET Core server uses Syncfusion Word Library (DocIO) to execute the mail merge and generate a DOCX document for display in the Syncfusion DOCX Editor.
+
 ## Prerequisites
 
 ### Client
@@ -88,7 +86,7 @@ Editor.
 
 The sample has two applications:
 
-1.  React/Vite client application
+1.  React client application
 2.  ASP.NET Core server application
 
 Start the server first because the React application uses the server for
@@ -118,7 +116,7 @@ http://localhost:5212
 The Document Editor service URL used by the React application is:
 
 ``` text
-http://localhost:5212/api/DocumentEditor/
+http://localhost:5212/api/documenteditor/
 ```
 
 ### 2. Start the React Application
@@ -147,42 +145,6 @@ Open the URL shown by Vite in the terminal, normally:
 http://localhost:5173
 ```
 
-## Template Workflow
-
-The main workflow is:
-
-``` text
-Template Studio Dashboard
-          │
-          ├── Create New Template
-          │
-          ├── Upload DOCX Template
-          │
-          └── Select Existing Template
-                    │
-                    ▼
-             Template Viewer
-                    │
-          ┌─────────┴─────────┐
-          │                   │
-          ▼                   ▼
-   Document Editor       Merge Fields Panel
-          │                   │
-          │            Insert Merge Fields
-          │                   │
-          └─────────┬─────────┘
-                    ▼
-             Save & Publish
-                    │
-                    ▼
-              DOCX Template
-                    │
-                    ▼
-             Mail Merge Preview
-                    │
-                    ▼
-              Generated SFDT
-```
 
 ## Mail Merge Data
 
@@ -197,7 +159,7 @@ For example, a Pledge Payment Reminder can use:
       "OrgName": "ABC Foundation",
       "OrgAddress": "123 Main Street, New York, NY 10001",
       "ReminderDate": "August 20, 2026",
-      "DonorName": "John Smith",
+      "DonorName": "Nancy",
       "DonorAddress": "45 Oak Street, New York, NY 10002",
       "PledgeNumber": "PLG-2026-0042",
       "PledgeDate": "July 15, 2026",
@@ -213,18 +175,15 @@ For example, a Pledge Payment Reminder can use:
 }
 ```
 
-The server receives this JSON through the `mailMergeData` property and
-prepares it for Syncfusion DocIO Mail Merge processing.
-
 ## Server API
 
 The main Document Editor endpoints used by the sample are:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/DocumentEditor/Import` | Imports a DOCX and converts it to SFDT. |
-| `POST /api/DocumentEditor/Save` | Saves the edited SFDT content as a DOCX template. |
-| `POST /api/DocumentEditor/MailMerge` | Executes Mail Merge using the supplied JSON data and returns SFDT. |
+| `POST /api/documenteditor/Import` | Imports a DOCX and converts it to SFDT. |
+| `POST /api/documenteditor/Save` | Saves the edited SFDT content as a DOCX template. |
+| `POST /api/documenteditor/MailMerge` | Executes Mail Merge using the supplied JSON data and returns SFDT. |
 
 ## Resources
 
