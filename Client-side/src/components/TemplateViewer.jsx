@@ -9,6 +9,51 @@ import { MERGE_FIELDS, DOCUMENT_EDITOR_SERVICE_URL } from '../data/sampleTemplat
 import { fetchSfdtFromDocx, saveTemplateToServer, mailMergePreview, readBlobAsDataUrl } from '../utils/studioStorage.js';
 import MergeFieldsPanel from './MergeFieldsPanel.jsx';
 
+// Capture page 1 of the LIVE DocumentEditor as a `data:image/png;base64,...`
+// data URI. We do NOT spin up a second offscreen editor — the
+// DocumentEditorContainer that backs this TemplateViewer is already
+// mounted in the DOM, holds the user's content, and exposes the same
+// `exportAsImage(1, format)` API the reference sample uses. This keeps
+// thumbnail generation user-context-aware (whatever's currently on
+// screen is what we capture) and removes the helper file's dependence
+// on a hidden editor for this flow.
+//
+// `printDevicePixelRatio = 2` keeps the bitmap crisp on HiDPI displays;
+// the `setTimeout(..., 500)` (matches the reference sample) gives the
+// editor's layout engine time to settle after `open()` so the captured
+// page isn't blank. The returned data URI is what we hand to App.jsx as
+// `thumbnailUrl` for the dashboard card.
+function captureThumbnailFromEditor(editor, { settleMs = 500 } = {}) {
+  return new Promise((resolve) => {
+    // No rejection here: thumbnail generation is best-effort. If it
+    // fails we resolve with an empty string so save/publish can still
+    // succeed (the .docx on disk is authoritative either way).
+    if (!editor || typeof editor.exportAsImage !== 'function') {
+      resolve('');
+      return;
+    }
+    editor.documentEditorSettings.printDevicePixelRatio = 2;
+    setTimeout(() => {
+      let img;
+      try {
+        img = editor.exportAsImage(1, 'image/png');
+      } catch {
+        resolve('');
+        return;
+      }
+      if (!img || !img.src) { resolve(''); return; }
+      img.onload = () => resolve(img.src);
+      img.onerror = () => resolve('');
+      // Syncfusion emits the data URI on `.src` synchronously; the
+      // `onload` hook is what the reference sample uses to be sure the
+      // browser has decoded the bitmap before reading dimensions. Some
+      // browsers fire `onload` before we attached — pull the value
+      // immediately in that case.
+      if (img.complete) resolve(img.src);
+    }, settleMs);
+  });
+}
+
 // TemplateViewer-local collection of merge fields that don't live in the
 // static MERGE_FIELDS catalog. It holds two kinds of entries:
 //   - template-scoped custom fields (key -> true), derived at runtime from
@@ -301,13 +346,14 @@ function TemplateViewer({
       });
       // eslint-disable-next-line no-console
       console.log(`[studio] "${template.name}" published via DocumentEditorController.Save -> ${saveResult.fileName}.docx`);
-      // 3. Refresh thumbnail so the dashboard reflects the published
-      //    content without waiting for App.jsx's effect to re-render.
+      // 3. Refresh thumbnail by exporting page 1 of the LIVE editor
+      //    (it's already mounted at this point — no second
+      //    DocumentEditorContainer / `printDevicePixelRatio` race).
+      //    Best-effort: an empty string just means the dashboard card
+      //    falls back to its placeholder until the next mount.
       let thumbnailDataUri = '';
       try {
-        const { generateThumbnailFromEditor } = await import('../utils/thumbnailGenerator.js');
-        const out = await generateThumbnailFromEditor(de);
-        thumbnailDataUri = out.thumbnailDataUri || '';
+        thumbnailDataUri = await captureThumbnailFromEditor(de) || '';
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('thumbnail refresh failed:', err);
@@ -389,15 +435,15 @@ function TemplateViewer({
       // eslint-disable-next-line no-console
       console.log(`[studio] "${template.name}" saved via DocumentEditorController.Save -> ${saveResult.fileName}.docx`);
 
-      // 3. Re-render the thumbnail from the live editor so the dashboard
-      //    card reflects the saved content. This is best-effort — if it
-      //    fails we still consider the save successful (the .docx on the
-      //    server is already up to date).
+      // 3. Re-render the thumbnail by exporting page 1 of the LIVE
+      //    editor. Same capture path as the publish flow above —
+      //    no second DocumentEditorContainer, no async helper
+      //    round-trip. Best-effort: if it fails we still consider
+      //    the save successful (the .docx on the server is already
+      //    up to date).
       let thumbnailDataUri = '';
       try {
-        const { generateThumbnailFromEditor } = await import('../utils/thumbnailGenerator.js');
-        const out = await generateThumbnailFromEditor(inst.documentEditor);
-        thumbnailDataUri = out.thumbnailDataUri || '';
+        thumbnailDataUri = await captureThumbnailFromEditor(inst.documentEditor) || '';
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('thumbnail refresh failed:', err);

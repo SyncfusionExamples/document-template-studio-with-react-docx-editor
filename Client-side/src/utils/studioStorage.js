@@ -1,11 +1,4 @@
-// studioStorage.js
-// Client-side API for talking to:
-//   - the Vite dev middleware (vite-plugin-studio-templates.js) at /studio-api
-//     (upload, delete, catalog writes, common-catalog reads/writes)
-//   - the .NET backend's DocumentEditor web service for the editor's own
-//     Save / MailMerge / Import flows (the editor talks to that directly,
-//     not via the Vite plugin — see saveTemplateToServer below).
-//
+
 // The .NET backend URL is sourced from `DOCUMENT_EDITOR_BASE_URL` defined
 // in ../data/sampleTemplates.js so the host/port lives in one place. The
 // dev-only /studio-api endpoints fall through cleanly in a production
@@ -95,41 +88,11 @@ export async function fetchSfdtFromDocx({ file, url, name }) {
   return res.text();
 }
 
-// (Removed) legacy `saveTemplate` helper: the editor's Save button now
-// goes straight to the backend's DocumentEditorController.Save endpoint
-// via `saveTemplateToServer()` below (no /studio-api/save hop). The
-// upload flow also doesn't use this helper — the .docx is written by
-// `/studio-api/upload`, not by a follow-up save. Keep this note here so
-// the next reader doesn't try to repair-delete usage that's already gone.
 
-// ---------------------------------------------------------------------------
-// Save via the backend's DocumentEditorController.Save endpoint.
-//
-// The editor's "Save Template" button serializes the live document to
-// Syncfusion's SFDT JSON and POSTs it to
-//   `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save`
-// (declared once in src/data/sampleTemplates.js) with a SaveParameter body of:
-//   {
-//     Content: <SFDT JSON string>,
-//     FileName: <document name WITHOUT the .docx extension>,
-//     Format:   'Docx'
-//   }
-//
-// The backend writes/overwrites the .docx in Server-side/wwwroot/Templates/
-// using FileMode.OpenOrCreate, so calling Save again with the same
-// FileName replaces the existing file (no "Save as new file" behaviour).
-//
-// This deliberately bypasses the Vite dev plugin so the editor hits the
-// authoritative save path (same one a production app would call).
-// ---------------------------------------------------------------------------
 const DOC_EDITOR_SAVE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save`;
 
 function stripDocxExtension(name) {
   if (!name) return 'Document';
-  // The backend's Save() expects the FileName it sees in the SaveParameter
-  // — it derives the format via Path.GetExtension. We send the name WITHOUT
-  // an extension and pin Format: 'Docx' so the backend never sees
-  // ambiguous extensions and the overwrite always targets <name>.docx.
   return String(name).replace(/\.docx$/i, '').trim() || 'Document';
 }
 
@@ -158,32 +121,6 @@ export async function saveTemplateToServer({ sfdtContent, documentName, format =
   return { ok: true, fileName, format };
 }
 
-// ---------------------------------------------------------------------------
-// Mail Merge preview via the backend's DocumentEditorController.MailMerge
-// endpoint.
-//
-// Mirrors the official Syncfusion online "Mail Merge" sample flow:
-//   1. Caller exports the live DocumentEditor to a .docx BLOB via
-//      `documentEditor.saveAsBlob('Docx')`.
-//   2. Caller reads the blob as a Data URL (FileReader.readAsDataURL) so
-//      the result is a base64 string prefixed with the data: URL scheme.
-//   3. We POST `{ fileName, documentData, mailMergeData }` (ExportData on
-//      the .NET side) to
-//        `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/MailMerge`
-//      where:
-//        fileName      = container.documentEditor.documentName + ".docx"
-//        documentData  = the base64 (data: URL) string from FileReader
-//        mailMergeData = JSON.stringify(userInputJsonObject)
-// The backend merges the JSON data into the Word doc, then re-serialises
-// the merged Word document back to Syncfusion's SFDT JSON, which we return
-// to the caller so the editor can `open()` it to display the merged preview.
-//
-// NOTE: `documentData` is intentionally sent as the raw Data URL string
-// (e.g. "data:application/vnd...;base64,...."); the backend's MailMerge
-// controller strips the "data:...;base64," prefix before
-// Convert.FromBase64String. The fileName MUST end with ".docx" because
-// the backend uses it as the Word doc filename hint.
-// ---------------------------------------------------------------------------
 const DOC_EDITOR_MAILMERGE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/MailMerge`;
 
 export async function mailMergePreview({ fileName, documentData, mailMergeData }) {
