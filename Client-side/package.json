@@ -16,11 +16,8 @@
     "@syncfusion/ej2-react-documenteditor": "^34.2.4",
     "@syncfusion/ej2-react-dropdowns": "^34.2.4",
     "@syncfusion/ej2-react-inputs": "^34.2.2",
-    "@syncfusion/ej2-react-lists": "^34.2.2",
-    "@syncfusion/ej2-react-navigations": "^34.2.4",
     "@syncfusion/ej2-react-popups": "^34.2.4",
     "@syncfusion/ej2-react-ribbon": "^34.2.2",
-    "@syncfusion/ej2-react-splitbuttons": "^34.2.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
