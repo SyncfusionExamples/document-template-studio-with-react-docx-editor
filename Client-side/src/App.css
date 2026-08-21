@@ -564,6 +564,13 @@
   padding: 16px 16px 16px;
 }
 
+#ts-upload-dialog_dialog-content:empty {
+  padding: 0;
+}
+#ts-publish-dialog_dialog-content:empty {
+  padding: 0;
+}
+
 /* Field labels — give each one breathing room from the field above and
    a tight margin to its own field below. */
 .ts-upload-label {
@@ -1008,12 +1015,11 @@
 }
 .ts-radio {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: 8px;
   padding: 4px 0;
   cursor: pointer;
   font-size: 12px;
-  color: #1f2330;
 }
 .ts-radio input[type="radio"] { margin-top: 2px; accent-color: #3d5afe; }
 .ts-radio strong { font-weight: 600; }

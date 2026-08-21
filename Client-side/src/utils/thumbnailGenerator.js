@@ -1,4 +1,5 @@
 import { DocumentEditorContainer } from '@syncfusion/ej2-documenteditor';
+import { DOCUMENT_EDITOR_SERVICE_URL } from '../data/sampleTemplates.js';
 
 // Render a single page of the loaded DocumentEditor into an HTMLImageElement
 // (PNG data URI). Only page 1 is captured — that's all a dashboard card
@@ -57,7 +58,7 @@ function createOffscreenContainer() {
     // serviceUrl is still required by the container even though we open()
     // documents from pre-fetched SFDT (via the same-origin proxy). The
     // public Syncfusion service URL works fine for this offscreen helper.
-    serviceUrl: 'http://localhost:5212/api/documenteditor/',
+    serviceUrl: DOCUMENT_EDITOR_SERVICE_URL,
   });
 
   return new Promise((resolve, reject) => {

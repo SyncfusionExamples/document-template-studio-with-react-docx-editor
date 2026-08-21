@@ -1,14 +1,17 @@
 // studioStorage.js
-// Client-side API for talking to the Vite dev middleware
-// (vite-plugin-studio-templates.js). Handles:
-//   - uploading a new .docx file (+ thumbnail) so it lands in src/data/
-//   - saving an edited .docx back to the data folder (requirement 3)
-//   - removing a template's files (requirement 2)
-//   - listing templates already persisted on disk (built-in samples + uploads)
+// Client-side API for talking to:
+//   - the Vite dev middleware (vite-plugin-studio-templates.js) at /studio-api
+//     (upload, delete, catalog writes, common-catalog reads/writes)
+//   - the .NET backend's DocumentEditor web service for the editor's own
+//     Save / MailMerge / Import flows (the editor talks to that directly,
+//     not via the Vite plugin — see saveTemplateToServer below).
 //
-// All endpoints are dev-only (the plugin is registered with apply:'serve').
-// In a production build these calls would 404 — but the sample app is meant
-// to be run with `npm run dev`, exactly like the shipped README instructs.
+// The .NET backend URL is sourced from `DOCUMENT_EDITOR_BASE_URL` defined
+// in ../data/sampleTemplates.js so the host/port lives in one place. The
+// dev-only /studio-api endpoints fall through cleanly in a production
+// build because the plugin is registered with `apply: 'serve'`.
+
+import { DOCUMENT_EDITOR_BASE_URL } from '../data/sampleTemplates.js';
 
 const API = '/studio-api';
 
@@ -92,29 +95,20 @@ export async function fetchSfdtFromDocx({ file, url, name }) {
   return res.text();
 }
 
-// POST an edited template back to the dev server so the .docx (and any
-// refreshed thumbnail) in src/data/ stays in sync with what is on screen.
-// NOTE: the editor's Save button now bypasses this helper and calls
-// saveTemplateToServer() below, which goes straight to the backend's
-// DocumentEditorController.Save endpoint (no vite-plugin involvement).
-// Kept here for backward compatibility (upload flow still relies on it
-// for the initial .docx write).
-export async function saveTemplate({ id, name, docxFile, thumbnailDataUri }) {
-  const fd = buildFormData({ id, name, docxFile, thumbnailDataUri });
-  const res = await fetch(`${API}/save`, { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`Save failed (${res.status})`);
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error || 'Save failed');
-  return json;
-}
+// (Removed) legacy `saveTemplate` helper: the editor's Save button now
+// goes straight to the backend's DocumentEditorController.Save endpoint
+// via `saveTemplateToServer()` below (no /studio-api/save hop). The
+// upload flow also doesn't use this helper — the .docx is written by
+// `/studio-api/upload`, not by a follow-up save. Keep this note here so
+// the next reader doesn't try to repair-delete usage that's already gone.
 
 // ---------------------------------------------------------------------------
 // Save via the backend's DocumentEditorController.Save endpoint.
 //
 // The editor's "Save Template" button serializes the live document to
 // Syncfusion's SFDT JSON and POSTs it to
-//   http://localhost:5212/api/documenteditor/Save
-// with a SaveParameter body of:
+//   `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save`
+// (declared once in src/data/sampleTemplates.js) with a SaveParameter body of:
 //   {
 //     Content: <SFDT JSON string>,
 //     FileName: <document name WITHOUT the .docx extension>,
@@ -128,7 +122,7 @@ export async function saveTemplate({ id, name, docxFile, thumbnailDataUri }) {
 // This deliberately bypasses the Vite dev plugin so the editor hits the
 // authoritative save path (same one a production app would call).
 // ---------------------------------------------------------------------------
-const DOC_EDITOR_SAVE_URL = 'http://localhost:5212/api/DocumentEditor/Save';
+const DOC_EDITOR_SAVE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save`;
 
 function stripDocxExtension(name) {
   if (!name) return 'Document';
@@ -175,12 +169,11 @@ export async function saveTemplateToServer({ sfdtContent, documentName, format =
 //      the result is a base64 string prefixed with the data: URL scheme.
 //   3. We POST `{ fileName, documentData, mailMergeData }` (ExportData on
 //      the .NET side) to
-//        http://localhost:5212/api/DocumentEditor/MailMerge
+//        `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/MailMerge`
 //      where:
 //        fileName      = container.documentEditor.documentName + ".docx"
 //        documentData  = the base64 (data: URL) string from FileReader
 //        mailMergeData = JSON.stringify(userInputJsonObject)
-//
 // The backend merges the JSON data into the Word doc, then re-serialises
 // the merged Word document back to Syncfusion's SFDT JSON, which we return
 // to the caller so the editor can `open()` it to display the merged preview.
@@ -191,7 +184,7 @@ export async function saveTemplateToServer({ sfdtContent, documentName, format =
 // Convert.FromBase64String. The fileName MUST end with ".docx" because
 // the backend uses it as the Word doc filename hint.
 // ---------------------------------------------------------------------------
-const DOC_EDITOR_MAILMERGE_URL = 'http://localhost:5212/api/DocumentEditor/MailMerge';
+const DOC_EDITOR_MAILMERGE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/MailMerge`;
 
 export async function mailMergePreview({ fileName, documentData, mailMergeData }) {
   if (typeof documentData !== 'string' || documentData.length === 0) {

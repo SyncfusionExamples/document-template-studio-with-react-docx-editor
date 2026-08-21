@@ -6,7 +6,6 @@ import {
   Ribbon
 } from '@syncfusion/ej2-react-documenteditor';
 import { ButtonComponent } from '@syncfusion/ej2-react-buttons';
-import { DialogComponent } from '@syncfusion/ej2-react-popups';
 import { MERGE_FIELDS, DOCUMENT_EDITOR_SERVICE_URL } from '../data/sampleTemplates.js';
 import { fetchSfdtFromDocx, saveTemplateToServer, mailMergePreview, readBlobAsDataUrl } from '../utils/studioStorage.js';
 import MergeFieldsPanel from './MergeFieldsPanel.jsx';
@@ -30,10 +29,10 @@ import MergeFieldsPanel from './MergeFieldsPanel.jsx';
 // - "Save and Publish"  = serializes the live document to SFDT JSON and
 //                          POSTs it to the backend's
 //                          DocumentEditorController.Save endpoint
-//                          (http://localhost:5212/api/documenteditor/Save)
+//                          (${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save)
 //                          with a SaveParameter { Content, FileName, Format:
 //                          'Docx' }. The backend overwrites <name>.docx in
-//                          Server-sde/wwwroot/Templates/ — saving with the
+//                          Server-side/wwwroot/Templates/ — saving with the
 //                          same FileName replaces the existing file. The
 //                          Vite dev plugin is intentionally NOT used.
 // - "Download"           = calls Syncfusion's
@@ -52,10 +51,10 @@ function TemplateViewer({
   onRequestPublish = () => {},
   registerPublishExecutor = () => {},
   onPublished = () => {},
+  onSaved = () => {},
   existingCategories: _existingCategories = [],
 }) {
   const editorRef = useRef(null);
-  const saveDialogRef = useRef(null);
   // dirty = the document has unsaved edits. The Save button is disabled
   // until the user actually changes something in the editor, and re-enabled
   // the moment they do (via the DocumentEditor's contentChange event).
@@ -240,7 +239,7 @@ function TemplateViewer({
   // Save the document via the backend's DocumentEditorController.Save endpoint.
   //   1. Serialize the editor's content to a SFDT JSON string
   //      (de.serialize() returns the Syncfusion in-memory representation).
-  //   2. POST it to http://localhost:5212/api/documenteditor/Save with a
+  //   2. POST it to ${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save with a
   //      SaveParameter body of { Content, FileName, Format: 'Docx' }.
   //   3. The backend writes/overwrites <name>.docx in
   //      Server-side/wwwroot/Templates/ via FileMode.OpenOrCreate, so a
@@ -411,10 +410,13 @@ function TemplateViewer({
         onThumbnailUpdated(template.id, thumbnailDataUri);
       }
 
-      saveDialogRef.current?.show();
       // The document is now in sync with what's on disk — clear the dirty
       // flag so the Save button disables again until the next edit.
       setDirty(false);
+      // Notify App.jsx so it can show the same Stay / Back-to-dashboard
+      // confirmation used by the first-time publish flow (the Save dialog
+      // now lives in App.jsx so both branches share one UI).
+      onSaved({ templateId: template.id, name: template.name });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Save failed:', err);
@@ -727,19 +729,6 @@ function TemplateViewer({
           commonFieldsProp={commonFieldsProp}
         />
       </div>
-
-      {/* Syncfusion dialog for "Save and Publish" confirmation */}
-      <DialogComponent
-        ref={saveDialogRef}
-        id={`save-dialog-${template.id}`}
-        header="Template published"
-        content={`"${template.name}" has been saved and published to wwwroot/Templates.`}
-        showCloseIcon
-        target=".ts-app"
-        width="360px"
-        animationSettings={{ effect: 'Zoom', duration: 200 }}
-        visible={false}
-      />
 
       {/* Preview-with-Data (Mail Merge) dialog — native HTML modal (matches
           the Add-Field dialog pattern in MergeFieldsPanel; avoids

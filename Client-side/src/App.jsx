@@ -133,6 +133,24 @@ function App() {
   const [publishedDialogName, setPublishedDialogName] = useState('');
   // When the user closes the confirmation, scroll back to the dashboard.
   const [lastPublishedId, setLastPublishedId] = useState(null);
+  // Whether the confirmation was triggered from first-time publish or a
+  // subsequent Save (overwrite path). Both flows reuse the same
+  // Stay / Back-to-dashboard dialog so the UI is identical; this flag
+  // only tweaks the dialog's header + body copy.
+  const [publishedDialogMode, setPublishedDialogMode] = useState('publish'); // 'publish' | 'save'
+
+  // Open the Save-success confirmation (overwrite path) with the same
+  // Stay / Back-to-dashboard dialog used by first-time publish. Called
+  // by TemplateViewer's handleSave once the .docx has been overwritten
+  // on disk. Naming here is "publishedDialog*" for historical reasons
+  // (it was added for the publish flow); the dialog is generic and
+  // serves both.
+  const handleSaved = useCallback(({ templateId, name } = {}) => {
+    setPublishedDialogName(name || (templateId && (templates.find((t) => t.id === templateId) || {}).name) || '');
+    setLastPublishedId(templateId || null);
+    setPublishedDialogMode('save');
+    setShowPublishedDialog(true);
+  }, [templates]);
 
   // Open the publish dialog for a given template. Called by
   // TemplateViewer when the user clicks "Save and Publish" on a template
@@ -387,11 +405,12 @@ function App() {
   // ---- Save flow ----
   // The editor's "Save Template" button talks directly to the backend's
   // DocumentEditorController.Save endpoint
-  // (http://localhost:5212/api/documenteditor/Save) with a SaveParameter
-  // body — see TemplateViewer.handleSave and saveTemplateToServer() in
-  // studioStorage.js. The Vite dev plugin's /studio-api/save is NOT used
-  // for this flow. App's only role after save is to update the in-memory
-  // thumbnail (see handleThumbnailUpdated below).
+  // (${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save) with a
+  // SaveParameter body — see TemplateViewer.handleSave and
+  // saveTemplateToServer() in studioStorage.js. The Vite dev plugin's
+  // /studio-api/save is NOT used for this flow. App's only role after
+  // save is to update the in-memory thumbnail (see handleThumbnailUpdated
+  // below).
 
   // After a save, the viewer hands us a refreshed thumbnail data URI. We
   // convert it to a Blob URL so the dashboard <img> can render it without
@@ -473,8 +492,10 @@ function App() {
               // confirmPublish so a reload picks up docxUrl.
               setPublishedDialogName(publishName.trim() || (selected && selected.name) || '');
               setLastPublishedId(selected ? selected.id : null);
+              setPublishedDialogMode('publish');
               setShowPublishedDialog(true);
             }}
+            onSaved={handleSaved}
             existingCategories={existingCategories}
           />
         ) : (
@@ -514,11 +535,6 @@ function App() {
         animationSettings={{ effect: 'Zoom', duration: 200 }}
         close={cancelUpload}
       >
-        {/* Only mount the form's children while the dialog is open. The
-            Syncfusion Dialog stays in the DOM when hidden, which keeps the
-            ComboBox mounted — and the ComboBox crashes on prop re-comparison
-            while the dialog is hidden (a Syncfusion + React 19 issue).
-            Gating on isUploadDialogOpen avoids the crash entirely. */}
         {isUploadDialogOpen && (
         <div className="ts-upload-form">
           {/* .docx file picker. Shows the chosen filename or a Browse button. */}
@@ -541,12 +557,6 @@ function App() {
             input={(e) => setUploadName(e.value ?? '')}
             floatLabelType="Never"
           />
-          {/* Category: a Syncfusion ComboBox with allowCustom=true so the
-              user can either pick an existing category OR type a brand-new
-              one. Its popup renders outside the dialog (on <body>), so it is
-              NOT clipped by the dialog content area's overflow — the native
-              <datalist> alternative was glitched because its popup was
-              trapped inside the scrollable dialog content. */}
           <label className="ts-upload-label" htmlFor="ts-upload-category">Category</label>
           <ComboBoxComponent
             id="ts-upload-category"
@@ -712,7 +722,7 @@ function App() {
       <DialogComponent
         ref={publishedDialogRef}
         id="ts-published-dialog"
-        header="Template published"
+        header={publishedDialogMode === 'save' ? 'Template saved' : 'Template published'}
         showCloseIcon
         visible={showPublishedDialog}
         target=".ts-app"
@@ -722,8 +732,8 @@ function App() {
       >
         <p className="ts-dialog-text">
           {publishedDialogName
-            ? `"${publishedDialogName}" has been published to wwwroot/Templates.`
-            : 'The template has been published to wwwroot/Templates.'}
+            ? `"${publishedDialogName}" has been ${publishedDialogMode === 'save' ? 'saved' : 'published'}.`
+            : `The template has been ${publishedDialogMode === 'save' ? 'saved' : 'published'}.`}
         </p>
         <div className="ts-dialog-actions">
           <ButtonComponent

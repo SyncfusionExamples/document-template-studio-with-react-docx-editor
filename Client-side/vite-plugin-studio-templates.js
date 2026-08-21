@@ -14,18 +14,29 @@
 //
 // Endpoints (all dev-only, registered with apply:'serve'):
 //   POST   /studio-api/upload    - write a .docx into wwwroot/Templates/, return meta
-//   POST   /studio-api/save      - overwrite a .docx in wwwroot/Templates/
 //   POST   /studio-api/delete    - unlink a .docx from wwwroot/Templates/
 //   PUT    /studio-api/catalog    - persist the client's templates.json collection
 //   GET    /studio-api/common-fields - read the persisted common merge-field catalog
 //   POST   /studio-api/mergefield - persist a custom merge field (template / common)
 //   POST   /studio-api/import     - forward .docx → SFDT via the .NET Import endpoint
+//
+// (The editor's Save/MailMerge calls are NOT proxied here — they go
+// straight to the .NET backend at `${BACKEND_BASE_URL}/api/DocumentEditor/`
+// so the editor hits the authoritative path, same as a production app.)
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DOCUMENT_EDITOR_BASE_URL } from './src/data/sampleTemplates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// The .NET backend (Server-side / Program.cs) that exposes
+// /api/DocumentEditor/{Import,Save,MailMerge}. The base URL is the same
+// constant the React app uses — see src/data/sampleTemplates.js. Import
+// the file (data-only ESM, no side effects) so this plugin and the
+// client stay in lockstep.
+const BACKEND_BASE_URL = DOCUMENT_EDITOR_BASE_URL;
 
 // .docx files ONLY — no JSON sidecars. These live alongside the .NET
 // app so the production server serves them at /Templates/<file>.docx.
@@ -221,31 +232,7 @@ async function handleUpload(req, res) {
   return send(res, 200, { ok: true, template: meta });
 }
 
-// POST /studio-api/save
-// Form fields: id, name
-// Files:       docx (optional, only if content changed), thumbnail (optional)
-//
-// Writes ONLY the .docx back into Server-side/wwwroot/Templates/ when the
-// client re-sent it (post-edit re-export). Metadata changes (name,
-// thumbnail) are NOT persisted here — the client is the single source of
-// truth for template metadata and persists it via PUT /studio-api/catalog.
-async function handleSave(req, res) {
-  const { fields, files } = await readMultipart(req);
-  const id = fields.id;
-  if (!id) return send(res, 400, { error: 'Missing template id' });
 
-  const slug = id.replace(/^tpl-/, '');
-  await ensureDir(TEMPLATES_DIR);
-
-  if (files.docx) {
-    await fs.writeFile(
-      path.join(TEMPLATES_DIR, slug + '.docx'),
-      files.docx.data,
-    );
-  }
-
-  return send(res, 200, { ok: true });
-}
 
 // POST /studio-api/delete
 // Form fields: id
@@ -295,10 +282,11 @@ async function handleCatalog(req, res) {
 // Forwards a .docx (multipart) to the public Syncfusion DocumentEditor Import
 // web service and returns the SFDT text. This is a same-origin proxy so the
 // browser avoids the CORS error it gets when calling the server
-// directly (the dev server is on 5173, the .NET server is on 5212).
+// directly (the dev server is on 5173, the .NET server is on
+// `${BACKEND_BASE_URL}`).
 // The .NET service exposes the Syncfusion-compatible Import endpoint
 // at /api/DocumentEditor/Import.
-const SYNC_IMPORT_URL = 'http://localhost:5212/api/DocumentEditor/Import';
+const SYNC_IMPORT_URL = `${BACKEND_BASE_URL}/api/DocumentEditor/Import`;
 
 async function handleImport(req, res) {
   const { fields, files } = await readMultipart(req);
@@ -483,7 +471,6 @@ export function studioTemplateFiles() {
 
         try {
           if (req.method === 'POST' && route === '/upload') return await handleUpload(req, res);
-          if (req.method === 'POST' && route === '/save') return await handleSave(req, res);
           if (req.method === 'POST' && route === '/delete') return await handleDelete(req, res);
           if (req.method === 'POST' && route === '/import') return await handleImport(req, res);
           if (req.method === 'PUT' && route === '/catalog') return await handleCatalog(req, res);

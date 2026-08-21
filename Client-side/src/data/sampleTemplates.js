@@ -1,9 +1,22 @@
-// All .docx-based templates (built-in samples + user-uploaded) now live as
-// JSON metadata in src/data/user-templates/ and are loaded uniformly via
-// /studio-api/list — see App.jsx. The original .docx files for the built-in
-// samples remain in this folder (src/data/) and are referenced by the
-// `docxUrl` field in their JSON metadata. Only the merge-field catalog,
-// the blank-template seed, and the Syncfusion service URL live here now.
+// Merge field catalog, blank-template seed, and the .NET backend URL live
+// here. The merge-field catalog is inlined below; everything else that
+// needs to call the backend imports `DOCUMENT_EDITOR_BASE_URL` from this
+// file so the host/port for the web API lives in one place.
+
+// ---------------------------------------------------------------------------
+// Backend Web API base URL.
+//
+// Local .NET server (Server-side / Program.cs) started with `dotnet run`,
+// listening on http://localhost:5212/. Every cross-origin call from the
+// React app — including the editor's own Import/Save/MailMerge path —
+// targets `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/`.
+export const DOCUMENT_EDITOR_BASE_URL = 'http://localhost:5212';
+
+// Full Service URL the Syncfusion DocumentEditor container needs in its
+// `serviceUrl` prop (note trailing slash — that's what the editor expects).
+// Derived from the base above; do not hardcode elsewhere.
+export const DOCUMENT_EDITOR_SERVICE_URL =
+  `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/`;
 
 // ---------------------------------------------------------------------------
 // Merge field catalog.
@@ -43,15 +56,8 @@ export const MERGE_FIELDS = {
   OrgEmail: true,
 };
 
-// Local DocumentEditor web service (Server-sde / Program.cs) hosting the
-// Syncfusion-compatible Import endpoint that converts a .docx into SFDT
-// (so DocumentEditor.open() can load it). The server is started with
-// `dotnet run` and listens on http://localhost:5212/.
-export const DOCUMENT_EDITOR_SERVICE_URL =
-  'http://localhost:5212/api/DocumentEditor/';
-
 // All built-in .docx templates live on the server under
-// Server-sde/wwwroot/Templates/ and are served via `app.UseStaticFiles()`.
+// Server-side/wwwroot/Templates/ and are served via `app.UseStaticFiles()`.
 // The single client-side catalog (src/data/templates.json) maps each
 // template's id, name, type, description, and fieldKeys to the URL where
 // the .docx can be fetched from. Thumbnails for every .docx-based

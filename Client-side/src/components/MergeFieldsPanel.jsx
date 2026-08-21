@@ -208,7 +208,7 @@ function MergeFieldsPanel({
         >
           <div className="ts-add-field-dialog" onClick={(e) => e.stopPropagation()}>
             <header className="ts-add-field-head">
-              <h3 id="ts-add-field-title">Add Custom Merge Field</h3>
+              <h3 id="ts-add-field-title">Add Merge Field</h3>
               <button
                 type="button"
                 className="ts-add-field-close"
