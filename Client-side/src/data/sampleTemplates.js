@@ -64,8 +64,9 @@ export const MERGE_FIELDS = {
 // template are generated client-side from the .docx — no per-type SVG
 // art is used anywhere.
 
-// A blank template's seeded merge fields and content used by "+ New Template".
+// Seeded merge fields for "+ New Template". The document body is always
+// blank when a new template is created — only its merge-field catalog is
+// pre-populated.
 export const NEW_TEMPLATE_FIELD_KEYS = [
   'OrgName', 'OrgAddress', 'DonorName', 'DonorAddress', 'DonationAmount', 'DonationDate',
 ];
-export const NEW_TEMPLATE_SEED_LINES = [];

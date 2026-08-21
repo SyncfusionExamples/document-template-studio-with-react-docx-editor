@@ -83,13 +83,12 @@ The ASP.NET Core server uses Syncfusion Word Library (DocIO) to execute the mail
 -   Syncfusion ASP.NET Core and DocIO packages referenced by the project
 
 ## How to Run
+The sample consists of two applications:
 
-The sample has two applications:
+- **ASP.NET Core Web API** – provides the server-side APIs required by the Syncfusion Document Editor.
+- **React application** – provides the client-side application.
 
-1.  React client application
-2.  ASP.NET Core server application
-
-Start the server first because the React application uses the server for
+Start the ASP.NET Core Web API server first because the React application uses the server for
 DOCX import, save, and Mail Merge operations.
 
 ### 1. Start the ASP.NET Core Server
@@ -118,8 +117,31 @@ The Document Editor service URL used by the React application is:
 ``` text
 http://localhost:5212/api/documenteditor/
 ```
+Keep this terminal running while using the React application.
 
-### 2. Start the React Application
+### 2. Configure the Web API Base URL
+
+Before installing the React dependencies or starting the React application, open:
+
+```text
+src/data/sampleTemplates.js
+```
+
+Locate the following configuration:
+
+```javascript
+export const DOCUMENT_EDITOR_BASE_URL = 'http://localhost:5212';
+```
+
+Update `DOCUMENT_EDITOR_BASE_URL` to match the URL where your ASP.NET Core Web API is running.
+
+For example:
+
+```javascript
+export const DOCUMENT_EDITOR_BASE_URL = 'http://localhost:5212';
+```
+
+### 3. Start the React Application
 
 Open another terminal in:
 
@@ -150,7 +172,7 @@ http://localhost:5173
 
 The sample uses a JSON string for Mail Merge data.
 
-For example, a Pledge Payment Reminder can use:
+For example, a Pledge Payment Reminder template can use:
 
 ``` json
 {

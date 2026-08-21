@@ -8,7 +8,6 @@ import Dashboard from './components/Dashboard.jsx';
 import TemplateViewer from './components/TemplateViewer.jsx';
 import {
   NEW_TEMPLATE_FIELD_KEYS,
-  NEW_TEMPLATE_SEED_LINES,
 } from './data/sampleTemplates.js';
 // Single source of truth for every .docx-backed template the studio
 // ships with. Each entry's `docxUrl` points at the Server-sde static
@@ -251,7 +250,10 @@ function App() {
 
   // "+ New Template" creates a blank template doc + its merge-field set,
   // places it in the sidebar list, and opens it immediately so the user
-  // can design the letter and Save (persist to the data folder).
+  // can design the letter and Save (persist to the data folder). The
+  // template body starts empty — the editor opens with `openBlank()`
+  // (see TemplateViewer.loadTemplateIntoEditor) and only the merge-field
+  // catalog is pre-populated.
   const handleAdd = useCallback(() => {
     const id = makeId();
     const tpl = {
@@ -260,7 +262,6 @@ function App() {
       type: 'General',
       description: 'Blank letter template — edit to customize.',
       fieldKeys: [...NEW_TEMPLATE_FIELD_KEYS],
-      seedLines: [...NEW_TEMPLATE_SEED_LINES],
     };
     setTemplates((prev) => [...prev, tpl]);
     setSelectedId(id);
