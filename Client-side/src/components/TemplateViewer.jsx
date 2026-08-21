@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DocumentEditorContainerComponent,
   Inject,
-  Toolbar,
   Ribbon
 } from '@syncfusion/ej2-react-documenteditor';
 import { ButtonComponent } from '@syncfusion/ej2-react-buttons';

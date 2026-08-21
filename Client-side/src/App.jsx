@@ -66,10 +66,6 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Reference to the latest TemplateViewer save fn, set by the viewer when
-  // it mounts. Used by App so the toolbar Save button can live anywhere.
-  const saveFnRef = useRef(null);
-
   const selected = templates.find((t) => t.id === selectedId) ?? null;
 
   // Generate PNG thumbnails for every template that has a .docx but no
@@ -128,7 +124,6 @@ function App() {
   // we drive a sibling dialog here. We keep this small surface so the
   // user gets the same "Template published" feedback as for subsequent
   // saves.)
-  const publishedDialogRef = useRef(null);
   const [showPublishedDialog, setShowPublishedDialog] = useState(false);
   const [publishedDialogName, setPublishedDialogName] = useState('');
   // When the user closes the confirmation, scroll back to the dashboard.
@@ -720,7 +715,6 @@ function App() {
           gets a consistent "Template published" feedback, and gives them
           a one-click "Back to dashboard" affordance. */}
       <DialogComponent
-        ref={publishedDialogRef}
         id="ts-published-dialog"
         header={publishedDialogMode === 'save' ? 'Template saved' : 'Template published'}
         showCloseIcon

@@ -268,8 +268,7 @@ export async function saveTemplatesCatalog(catalog) {
 // ids in window.localStorage. On startup App.jsx filters the catalog
 // against this list, and the delete handler adds the id to it.
 //
-// Clearing localStorage (or calling clearHiddenBuiltInTemplates()) restores
-// the built-ins.
+// Clearing localStorage restores the built-ins.
 // ---------------------------------------------------------------------------
 const HIDDEN_BUILTINS_KEY = 'studio.hiddenBuiltInTemplates';
 
@@ -308,37 +307,6 @@ export function hideBuiltInTemplate(id) {
   const next = [...current, id];
   writeHiddenBuiltIns(next);
   return next;
-}
-
-export function unhideBuiltInTemplate(id) {
-  const current = readHiddenBuiltIns();
-  if (!current.includes(id)) return current;
-  const next = current.filter((x) => x !== id);
-  writeHiddenBuiltIns(next);
-  return next;
-}
-
-export function clearHiddenBuiltInTemplates() {
-  writeHiddenBuiltIns([]);
-}
-
-// Read a File (the <input type=file> selection) and return its bytes as a
-// Uint8Array. Used by the thumbnail generator to load the DOCX into a
-// temporary DocumentEditor for rendering.
-export async function readFileBytes(file) {
-  const buf = await file.arrayBuffer();
-  return new Uint8Array(buf);
-}
-
-// Generate a unique id on the client that matches the server-side slug rule
-// (see vite-plugin-studio-templates.js). Useful when the studio wants to
-// know the id ahead of the round-trip (e.g. for optimistic UI).
-export function makeTemplateId(name) {
-  const slug = (name || 'template')
-    .replace(/\.[^.]+$/, '')
-    .replace(/[^A-Za-z0-9-_]+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'template';
-  return `tpl-${slug}-${Date.now().toString(36)}`;
 }
 
 // POST a custom merge field to the dev middleware so it lands in:
