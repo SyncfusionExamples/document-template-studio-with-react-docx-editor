@@ -129,10 +129,11 @@ function Sidebar({ templates, selectedId, onSelect, onAdd, onUpload, isUploading
                         <span className="ts-tree-name">{t.name}</span>
                       </span>
                       <ButtonComponent
-                        iconCss="e-icons e-close-icon"
+                        iconCss="e-icons e-trash"
                         cssClass="e-flat ts-icon-btn ts-delete"
                         title={`Remove ${t.name}`}
                         onClick={(e) => {
+                          e.stopPropagation();
                           e.originalEvent?.stopPropagation();
                           onDelete(t.id);
                         }}

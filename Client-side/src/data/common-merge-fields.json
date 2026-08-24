@@ -1,9 +1,5 @@
 {
   "fields": {
-    "SignDate": true,
-    "NewName": true,
-    "OrganizationCity": true,
-    "DonorCity": true
   },
   "updatedAt": "2026-08-20T14:38:12.438Z"
 }

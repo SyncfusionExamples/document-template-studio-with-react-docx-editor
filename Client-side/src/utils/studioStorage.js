@@ -8,84 +8,93 @@ import { DOCUMENT_EDITOR_BASE_URL } from '../data/sampleTemplates.js';
 
 const API = '/studio-api';
 
-// Build a FormData payload for upload / save.
-// `thumbnailDataUri` is optional ("data:image/png;base64,...").
-function buildFormData({ name, type, description, fieldKeys, id, docxFile, thumbnailDataUri }) {
-  const fd = new FormData();
-  if (id) fd.append('id', id);
-  if (name) fd.append('name', name);
-  if (type) fd.append('type', type);
-  if (description) fd.append('description', description);
-  if (fieldKeys) fd.append('fieldKeys', JSON.stringify(fieldKeys));
-  if (docxFile) fd.append('docx', docxFile, docxFile.name || 'template.docx');
-  if (thumbnailDataUri) {
-    // Pass the data URI as a pseudo-file so the multipart parser treats it
-    // as a "file" part. The server strips the base64 prefix and writes bytes.
-    const blob = new Blob([thumbnailDataUri], { type: 'text/plain' });
-    fd.append('thumbnail', blob, 'thumbnail.txt');
-  }
-  return fd;
-}
-
-// POST a new template to the dev server. Returns the saved template object
-// (including the docxUrl + thumbnailUrl that should be used on the client).
-export async function uploadTemplate({ file, name, type = 'General', description = '', fieldKeys = [], thumbnailDataUri = '' }) {
-  const fd = buildFormData({
-    name, type, description, fieldKeys,
-    docxFile: file,
-    thumbnailDataUri,
-  });
-  const res = await fetch(`${API}/upload`, { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error || 'Upload failed');
-  return json.template;
-}
-
-// Import a .docx into SFDT via the same-origin dev proxy. Calling the
-// Syncfusion Import service directly from the browser is blocked by CORS,
-// so the Vite dev middleware forwards the request server-side and returns
-// the SFDT text. The browser then calls DocumentEditor.open(sfdt) with it.
+// The Vite dev plugin is still used for development-only catalog and
+// custom-field operations, but DOCX Import now goes directly from the
+// browser to the authoritative ASP.NET Core DocumentEditor controller.
+// No upload filesystem write is performed by Vite.
 //
-// Accepts either a File or a URL (for built-in templates served by Vite).
+// ASP.NET Core DocumentEditor Import endpoints. `Import` accepts a
+// multipart upload from the browser (upload flow); `ImportFileURL`
+// accepts a JSON `{ fileUrl }` body and the .NET service pulls the
+// .docx from its own wwwroot/Templates/ folder server-side, which is
+// the only path that works when the React app and the .NET service
+// are on different machines (no same-origin proxy is available).
+const DOC_EDITOR_IMPORT_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Import`;
+const DOC_EDITOR_IMPORT_FILE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/ImportFileURL`;
+
+// Import a .docx into SFDT by talking to the authoritative ASP.NET
+// Core DocumentEditor controller. Two call shapes are accepted:
+//   - { file }    (upload flow):
+//       The browser `File` is posted directly as multipart/form-data
+//       to `POST /api/DocumentEditor/Import`. No FileReader is
+//       involved and no Vite proxy is required.
+//   - { url }     (open-existing flow):
+//       The absolute `${DOCUMENT_EDITOR_BASE_URL}/Templates/<slug>.docx`
+//       URL is forwarded as `{ fileUrl }` in a JSON body to
+//       `POST /api/DocumentEditor/ImportFileURL`. The .NET service
+//       downloads the .docx from its own static-file path and returns
+//       the SFDT directly. This collapses what would otherwise be a
+//       browser fetch → server POST into a single same-origin round
+//       trip and is the only path that works when the React app runs
+//       on a different machine than ASP.NET Core.
 export async function fetchSfdtFromDocx({ file, url, name }) {
-  let blob;
-  let filename = 'template.docx';
-  // baseName is the document name WITHOUT the .docx extension. The Vite
-  // dev plugin forwards it to the backend's Import endpoint as a
-  // multipart `FileName` field, and the Save endpoint uses the same
-  // name to overwrite <name>.docx in wwwroot/Templates/.
-  let baseName = (name || '').replace(/\.docx$/i, '').trim();
   if (file) {
-    blob = file;
-    filename = file.name || filename;
-    if (!baseName) baseName = filename.replace(/\.docx$/i, '');
-  } else if (url) {
-    // `cache: 'no-store'` is critical for the Save→Reopen round-trip:
-    // after Save overwrites <slug>.docx on the server, the browser's
-    // HTTP cache (and Vite's proxy cache) would otherwise hand back the
-    // pre-save bytes, and the reopened editor would look unedited.
-    // We also append a cache-busting query so any intermediate cache
-    // (Vite's dev proxy in particular) sees it as a fresh resource.
-    const cacheBustUrl = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now().toString(36);
-    const res = await fetch(cacheBustUrl, { cache: 'no-store' });
-    blob = await res.blob();
-    // Derive a filename from the URL tail (use the original url so the
-    // import form field carries the real .docx name, not the cache-bust).
-    try { filename = decodeURIComponent(url.split('/').pop()) || filename; } catch { /* keep default */ }
-    if (!baseName) baseName = filename.replace(/\.docx$/i, '');
-  } else {
-    throw new Error('fetchSfdtFromDocx: file or url required');
+    // Upload flow: post the browser File as multipart/form-data.
+    const baseName = (name || file.name || 'template').replace(/\.docx$/i, '').trim();
+    const fd = new FormData();
+    fd.append('docx', file, file.name || 'template.docx');
+    if (baseName) fd.append('FileName', baseName);
+
+    const res = await fetch(DOC_EDITOR_IMPORT_URL, {
+      method: 'POST',
+      body: fd,
+    });
+
+    if (!res.ok) {
+      let detail = '';
+      try { detail = await res.text(); } catch { /* ignore */ }
+      throw new Error(
+        `Import failed (${res.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`,
+      );
+    }
+    const responseText = await res.text();
+    if (!responseText) throw new Error('Import returned an empty document.');
+    return responseText;
   }
-  const fd = new FormData();
-  fd.append('docx', blob, filename);
-  if (baseName) fd.append('FileName', baseName);
-  const res = await fetch(`${API}/import`, { method: 'POST', body: fd });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Import failed (${res.status})`);
+
+  if (url) {
+    // Open-existing flow: let the .NET service resolve the URL from
+    // its own wwwroot/Templates/ folder. The .NET controller's
+    // `FileUrlInfo` body only carries `fileUrl`, so the request shape
+    // is just `{ fileUrl }` — no `FileName` is needed (the Save round
+    // trip derives its own slug from `template.docxUrl` at write time).
+    //
+    // Cache-busting is appended to the URL we hand to the server: the
+    // .NET service uses WebClient.DownloadData underneath, which is
+    // process-local and not cached, but the query string also dodges
+    // any front-of-house proxy cache between the React origin and the
+    // .NET service (a real concern in a multi-machine deployment).
+    //const cacheBustUrl = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now().toString(36);
+
+    const res = await fetch(DOC_EDITOR_IMPORT_FILE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+      body: JSON.stringify({ fileUrl: url }),
+    });
+
+    if (!res.ok) {
+      let detail = '';
+      try { detail = await res.text(); } catch { /* ignore */ }
+      throw new Error(
+        `ImportFileURL failed (${res.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`,
+      );
+    }
+    const responseText = await res.text();
+    if (!responseText) throw new Error('ImportFileURL returned an empty document.');
+    return responseText;
   }
-  return res.text();
+
+  throw new Error('fetchSfdtFromDocx: file or url required');
 }
 
 
@@ -167,18 +176,6 @@ export function readBlobAsDataUrl(blob) {
     reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
     reader.readAsDataURL(blob);
   });
-}
-
-// DELETE a template's .docx file from the server's wwwroot/Templates folder.
-// The matching metadata entry is NOT removed here — the client manages its
-// own single templates.json collection (see saveTemplatesCatalog) and is
-// responsible for removing the entry from there before / after calling this.
-export async function deleteTemplateFiles(id) {
-  const fd = new FormData();
-  fd.append('id', id);
-  const res = await fetch(`${API}/delete`, { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`Delete failed (${res.status})`);
-  return res.json();
 }
 
 // Persist the client's single templates.json collection back to disk

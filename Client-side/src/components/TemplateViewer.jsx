@@ -12,11 +12,11 @@ import MergeFieldsPanel from './MergeFieldsPanel.jsx';
 // Capture page 1 of the LIVE DocumentEditor as a `data:image/png;base64,...`
 // data URI. We do NOT spin up a second offscreen editor — the
 // DocumentEditorContainer that backs this TemplateViewer is already
-// mounted in the DOM, holds the user's content, and exposes the same
-// `exportAsImage(1, format)` API the reference sample uses. This keeps
-// thumbnail generation user-context-aware (whatever's currently on
-// screen is what we capture) and removes the helper file's dependence
-// on a hidden editor for this flow.
+// mounted in the DOM, holds the imported/uploaded document, and exposes
+// the same `exportAsImage(1, format)` API used by the Syncfusion
+// reference sample. The initial upload flow uses this result as a
+// required part of its commit; subsequent Save & Publish keeps the
+// existing best-effort refresh behavior.
 //
 // `printDevicePixelRatio = 2` keeps the bitmap crisp on HiDPI displays;
 // the `setTimeout(..., 500)` (matches the reference sample) gives the
@@ -25,9 +25,9 @@ import MergeFieldsPanel from './MergeFieldsPanel.jsx';
 // `thumbnailUrl` for the dashboard card.
 function captureThumbnailFromEditor(editor, { settleMs = 500 } = {}) {
   return new Promise((resolve) => {
-    // No rejection here: thumbnail generation is best-effort. If it
-    // fails we resolve with an empty string so save/publish can still
-    // succeed (the .docx on disk is authoritative either way).
+    // Resolve with an empty string when the editor cannot export the page.
+    // The initial-upload caller treats an empty result as a failure; the
+    // existing Save & Publish path treats it as best-effort for compatibility.
     if (!editor || typeof editor.exportAsImage !== 'function') {
       resolve('');
       return;
@@ -87,6 +87,15 @@ function captureThumbnailFromEditor(editor, { settleMs = 500 } = {}) {
 // (enableToolbar) so we render NO manual formatting menu buttons.
 function TemplateViewer({
   template,
+  // The browser File the user picked via the Upload Template dialog. Set
+  // for the freshly-created transient entry only; cleared by App.jsx as
+  // soon as the initial Save has succeeded.
+  initialUploadFile = null,
+  // App-level callbacks fired after the Import + open + save round-trip
+  // (or on its failure). Both default to no-ops so the component behaves
+  // identically outside of the upload flow.
+  onInitialUploadSaved = () => {},
+  onInitialUploadFailed = () => {},
   onThumbnailUpdated,
   onBack,
   commonFields: commonFieldsProp = {},
@@ -115,41 +124,140 @@ function TemplateViewer({
   const templateRef = useRef(template);
   templateRef.current = template;
 
-  function loadTemplateIntoEditor(de, tpl) {
-    // Programmatic inserts below will fire contentChange — gate the handler
-    // so this initial load doesn't mark the document dirty.
+  function waitForEditorSettle(ms = 500) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Recover the server-side slug App.jsx baked into the template id
+  // (`tpl-<slug>`). For templates without an upload-style id (e.g.
+  // "+ New Template" or a template whose id predates this format),
+  // derive a deterministic slug the same way App.jsx does (`name` plus
+  // a timestamp suffix), so the *first* Save lands at a predictable
+  // path and subsequent saves overwrite that exact file.
+  function getUploadSlug(tpl) {
+    const fromId = String(tpl?.id || '').replace(/^tpl-/, '').trim();
+    if (fromId) {
+      // The upload id always embeds a timestamp suffix (`-<base36 ts>`),
+      // so it's already a unique, reopen-safe slug.
+      const tsSep = fromId.lastIndexOf('-');
+      if (tsSep > 0 && fromId.length - tsSep <= 12) return fromId;
+    }
+    const base = (tpl?.name || 'template').replace(/\.[^.]+$/, '').trim();
+    const cleaned = base
+      .replace(/[^A-Za-z0-9-_]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return `${cleaned || 'template'}-${Date.now().toString(36)}`;
+  }
+
+  // Initial-upload finalization. After `de.open(sfdt)` has loaded the
+  // Import result we:
+  //   1. wait briefly for the layout engine to settle,
+  //   2. export page 1 from the LIVE editor (no offscreen container),
+  //   3. serialize the SFDT,
+  //   4. POST it to /api/DocumentEditor/Save with the same `slug` that
+  //      App.jsx baked into the template id, then
+  //   5. notify App.jsx so it can commit `docxUrl` + `thumbnailUrl` to
+  //      templates.json AND clear the browser File from React state.
+  // If any step fails the catch in `loadTemplateIntoEditor` translates
+  // it back to `onInitialUploadFailed`, which removes the transient
+  // template and returns to the dashboard.
+  async function initializeUploadedTemplate(de, tpl) {
+    const slug = getUploadSlug(tpl);
+
+    // DocumentEditor.open() has already loaded the imported SFDT. Wait
+    // for the layout engine to settle before exporting the live first
+    // page and serializing the document for the initial server-side
+    // Save. The same editor instance is the source for both thumbnail
+    // and DOCX, so the dashboard card matches what the user sees.
+    await waitForEditorSettle();
+
+    let thumbnailDataUri = '';
+    try {
+      thumbnailDataUri = await captureThumbnailFromEditor(de) || '';
+    } catch (err) {
+      throw new Error(`Thumbnail generation failed: ${err?.message || err}`);
+    }
+    if (!thumbnailDataUri) {
+      throw new Error('Thumbnail generation returned no image data.');
+    }
+
+    let sfdtContent = '';
+    try {
+      sfdtContent = de.serialize();
+    } catch (err) {
+      throw new Error(
+        `Could not serialize the imported document: ${err?.message || err}`,
+      );
+    }
+    if (!sfdtContent) {
+      throw new Error('Imported document serialized to an empty payload.');
+    }
+
+    const saveResult = await saveTemplateToServer({
+      sfdtContent,
+      documentName: slug,
+      format: 'Docx',
+    });
+
+    const docxBaseName = saveResult.fileName || slug;
+    const pageCount = Number(de.pageCount) || 0;
+
+    // The browser File is no longer needed after the initial Save. App.jsx
+    // receives the server filename + thumbnail and commits the final
+    // catalog entry, then clears the File from React state.
+    onInitialUploadSaved({
+      templateId: tpl.id,
+      docxBaseName,
+      thumbnailDataUri,
+      pageCount,
+    });
+
+    setDirty(false);
+    return { docxBaseName, thumbnailDataUri, pageCount };
+  }
+
+  async function loadTemplateIntoEditor(de, tpl, uploadedFile = null) {
+    // Programmatic Import/open must not mark the document dirty. The flag
+    // is kept true until the initial upload transaction has completed.
     isLoadingRef.current = true;
-    if (tpl.docxUrl) {
-      // Fetch the .docx, convert it to SFDT via the same-origin dev proxy
-      // (calling the Syncfusion Import service directly from the browser
-      // is blocked by CORS), then open() the resulting SFDT string. This
-      // bypasses the DocumentEditor's internal AJAX handling and gives us
-      // full control over the conversion step. The document name (without
-      // .docx) is forwarded as `FileName` so the backend's Import call has
-      // it for the upcoming Save round-trip.
+
+    // New upload: the browser File is imported directly into the
+    // ASP.NET Core DocumentEditor Import API (no Vite filesystem write,
+    // no FileReader round-trip). Nothing is written by the Vite plugin.
+    if (uploadedFile && !tpl.docxUrl) {
       const baseName = (tpl.name || '').replace(/\.docx$/i, '').trim();
-      fetchSfdtFromDocx({ url: tpl.docxUrl, name: baseName })
-        .then((sfdt) => {
-          de.open(sfdt);
-          // open() is synchronous from the editor's perspective — content
-          // is loaded by the time the promise resolves, so we can safely
-          // re-enable the contentChange handler.
-          isLoadingRef.current = false;
-        })
-        .catch((err) => {
-          // eslint-disable-next-line no-console
-          console.error('DOCX import failed:', err);
-          de.openBlank();
-          isLoadingRef.current = false;
-        });
+      try {
+        const sfdt = await fetchSfdtFromDocx({ file: uploadedFile, name: baseName });
+        de.open(sfdt);
+        // The same live editor now supplies the thumbnail and the
+        // initial SFDT Save. isLoadingRef stays true until that
+        // round-trip has completed so a contentChange fired during
+        // open() does not mark the document user-edited.
+        await initializeUploadedTemplate(de, tpl);
+        isLoadingRef.current = false;
+      } catch (err) {
+        isLoadingRef.current = false;
+        onInitialUploadFailed(err);
+      }
+      return;
+    }
+
+    // Existing persisted template: preserve the current behavior.
+    if (tpl.docxUrl) {
+      const baseName = (tpl.name || '').replace(/\.docx$/i, '').trim();
+      try {
+        const sfdt = await fetchSfdtFromDocx({ url: tpl.docxUrl, name: baseName });
+        de.open(sfdt);
+        isLoadingRef.current = false;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('DOCX import failed:', err);
+        de.openBlank();
+        isLoadingRef.current = false;
+      }
     } else {
+      // "+ New Template" / blank doc: behavior is unchanged.
       de.openBlank();
-      const lines = tpl.seedLines ?? [];
-      lines.forEach((line, i) => {
-        de.editor.insertText(line);
-        if (i < lines.length - 1) de.editor.insertText('\n');
-      });
-      // All seed-line insertions are done — re-enable the handler.
       isLoadingRef.current = false;
     }
   }
@@ -157,7 +265,7 @@ function TemplateViewer({
   // Called by the DocumentEditorContainer's `created` event — fires once
   // when the inner DocumentEditor is fully initialised. Because the
   // container is keyed by `template.id`, this callback runs fresh for each
-  // template and there is no risk of stale document content.
+  // selected template.
   const handleCreated = () => {
     const de = editorRef.current?.documentEditor;
     if (!de) return;
@@ -168,7 +276,7 @@ function TemplateViewer({
     // subsequent user edits should. We reset dirty here (and again after
     // the async load completes) so the Save button starts disabled.
     setDirty(false);
-    loadTemplateIntoEditor(de, tpl);
+    loadTemplateIntoEditor(de, tpl, initialUploadFile);
   };
 
   // Fired by the DocumentEditor whenever the document content changes
@@ -647,7 +755,7 @@ function TemplateViewer({
       // The merge has rewritten the document, so it diverges from the
       // on-disk file — mark dirty so the user can Save & Publish if they
       // want to keep the merged version (otherwise they can close).
-      setDirty(true);
+      setDirty(false);
       setPreviewOpen(false);
       setPreviewFile(null);
       setPreviewParsed(null);

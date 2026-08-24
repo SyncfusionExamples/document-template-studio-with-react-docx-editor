@@ -1,13 +1,18 @@
-﻿using Microsoft.AspNetCore.Cors;
+﻿using System.Linq;
+using System.Net;
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json.Linq;
 using Syncfusion.DocIORenderer;
 using Syncfusion.EJ2.DocumentEditor;
 using Syncfusion.EJ2.SpellChecker;
 using Syncfusion.Pdf;
+using static System.Convert;
+using static System.IO.Path;
+using static Newtonsoft.Json.Linq.JObject;
+using static Syncfusion.EJ2.DocumentEditor.WordDocument;
 using WDocument = Syncfusion.DocIO.DLS.WordDocument;
 using WFormatType = Syncfusion.DocIO.FormatType;
-using Newtonsoft.Json.Linq;
-using System.Linq;
 
 namespace DocumentTemplateStudioService.Controllers
 {
@@ -56,6 +61,26 @@ namespace DocumentTemplateStudioService.Controllers
             string json = Newtonsoft.Json.JsonConvert.SerializeObject(document);
             document.Dispose();
             return json;
+        }
+        [AcceptVerbs("Post")]
+        [HttpPost]
+        [EnableCors("AllowAllOrigins")]
+        [Route("ImportFileURL")]
+        public string ImportFileURL([FromBody] FileUrlInfo param)
+        {
+            using (WebClient client = new WebClient())
+            {
+                MemoryStream stream = new MemoryStream(client.DownloadData(param.fileUrl));
+                WordDocument document = WordDocument.Load(stream, FormatType.Docx);
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(document);
+                document.Dispose();
+                stream.Dispose();
+                return json;
+            }
+        }
+        public class FileUrlInfo
+        {
+            public string fileUrl { get; set; }
         }
 
         // Representing parameters for clipboard operations

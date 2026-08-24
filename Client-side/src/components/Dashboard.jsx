@@ -90,7 +90,7 @@ function Dashboard({ templates, onOpen, onAdd, onUpload, onDelete, isUploading }
               >
                 <ButtonComponent
                   iconCss="e-icons e-trash"
-                  cssClass="e-flat ts-thumb-delete"
+                  cssClass="e-flat ts-thumb-delete ts-icon-btn ts-delete"
                   title={`Remove ${t.name}`}
                   aria-label={`Remove ${t.name}`}
                   onClick={(e) => {

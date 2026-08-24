@@ -1,52 +1,15 @@
 // Vite dev-only middleware plugin.
 //
-// Responsibilities (split between server and client per the user's
-// instruction):
-//   - .docx files live ONLY in Server-side/wwwroot/Templates/ (served by
-//     the .NET app via app.UseStaticFiles()). This plugin writes uploaded
-//     / edited .docx files there and unlinks them on delete.
-//   - All template metadata (id, name, type, description, fieldKeys,
-//     docxUrl, thumbnailUrl, ...) is owned by the client as a single
-//     JSON collection file at Client-side/src/data/templates.json.
-//     This plugin exposes a small PUT /studio-api/catalog endpoint so the
-//     client can persist its updated collection back to that file
-//     (so the changes survive Vite dev server restarts).
-//
 // Endpoints (all dev-only, registered with apply:'serve'):
-//   POST   /studio-api/upload    - write a .docx into wwwroot/Templates/, return meta
-//   POST   /studio-api/delete    - unlink a .docx from wwwroot/Templates/
-//   PUT    /studio-api/catalog    - persist the client's templates.json collection
-//   GET    /studio-api/common-fields - read the persisted common merge-field catalog
-//   POST   /studio-api/mergefield - persist a custom merge field (template / common)
-//   POST   /studio-api/import     - forward .docx → SFDT via the .NET Import endpoint
-//
-// (The editor's Save/MailMerge calls are NOT proxied here — they go
-// straight to the .NET backend at `${BACKEND_BASE_URL}/api/DocumentEditor/`
-// so the editor hits the authoritative path, same as a production app.)
+//   PUT    /studio-api/catalog        - persist the client's templates.json collection
+//   GET    /studio-api/common-fields  - read the persisted common merge-field catalog
+//   POST   /studio-api/mergefield     - persist a custom merge field (template / common)
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DOCUMENT_EDITOR_BASE_URL } from './src/data/sampleTemplates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// The .NET backend (Server-side / Program.cs) that exposes
-// /api/DocumentEditor/{Import,Save,MailMerge}. The base URL is the same
-// constant the React app uses — see src/data/sampleTemplates.js. Import
-// the file (data-only ESM, no side effects) so this plugin and the
-// client stay in lockstep.
-const BACKEND_BASE_URL = DOCUMENT_EDITOR_BASE_URL;
-
-// .docx files ONLY — no JSON sidecars. These live alongside the .NET
-// app so the production server serves them at /Templates/<file>.docx.
-const TEMPLATES_DIR = path.resolve(
-  __dirname,
-  '..',
-  'Server-side',
-  'wwwroot',
-  'Templates',
-);
 
 // The single client-side catalog file. The client reads this on startup
 // (one place to look up every template's metadata) and writes back to it
@@ -60,17 +23,6 @@ const COMMON_FIELDS_FILE = path.resolve(__dirname, 'src', 'data', 'common-merge-
 const API_PREFIX = '/studio-api';
 
 // --- helpers -------------------------------------------------------------
-
-function ensureDir(dir) {
-  return fs.mkdir(dir, { recursive: true });
-}
-
-function safeFileName(name) {
-  // Strip extension, keep [A-Za-z0-9-_] only, collapse to single underscores.
-  const base = (name || '').replace(/\.[^.]+$/, '').trim();
-  const cleaned = base.replace(/[^A-Za-z0-9-_]+/g, '_').replace(/^_+|_+$/g, '');
-  return cleaned || 'template';
-}
 
 // Read a multipart/form-data body from a Node IncomingMessage and pull out
 // the named file fields. Vite's dev server gives us the raw stream; we parse
@@ -193,66 +145,6 @@ function send(res, status, body) {
 
 // --- route handlers ------------------------------------------------------
 
-// POST /studio-api/upload
-// Form fields: name, type, description, fieldKeys (JSON)
-// Files:       docx, thumbnail (optional PNG data URI string)
-//
-// Writes ONLY the .docx into Server-side/wwwroot/Templates/ and returns
-// the template metadata to the client. The client is responsible for
-// adding the returned metadata entry to its single collection file
-// (Client-side/src/data/templates.json) via PUT /studio-api/catalog.
-async function handleUpload(req, res) {
-  const { fields, files } = await readMultipart(req);
-  const docxFile = files.docx;
-  if (!docxFile) return send(res, 400, { error: 'Missing docx file' });
-
-  const name = fields.name || 'Uploaded Template';
-  const slug = safeFileName(name) + '-' + Date.now().toString(36);
-  await ensureDir(TEMPLATES_DIR);
-  await fs.writeFile(path.join(TEMPLATES_DIR, slug + '.docx'), docxFile.data);
-
-  // Thumbnail: passed through as a base64 data-URI string. The client
-  // stores it inside the single templates.json collection — no separate
-  // .png or per-template .json sidecar file is written to disk.
-  let thumbnailUrl = '';
-  if (files.thumbnail) {
-    thumbnailUrl = files.thumbnail.data.toString('utf8');
-  }
-
-  const meta = {
-    id: 'tpl-' + slug,
-    name,
-    type: fields.type || 'General',
-    description: fields.description || 'Uploaded .docx template.',
-    fieldKeys: tryParse(fields.fieldKeys, []),
-    uploadedAt: new Date().toISOString(),
-    docxUrl: `/Templates/${slug}.docx`,
-    thumbnailUrl,
-  };
-  return send(res, 200, { ok: true, template: meta });
-}
-
-
-
-// POST /studio-api/delete
-// Form fields: id
-//
-// Unlinks ONLY the .docx from Server-side/wwwroot/Templates/. Metadata is
-// removed from the client's single templates.json collection via
-// PUT /studio-api/catalog (the client calls this first, then this).
-async function handleDelete(req, res) {
-  const { fields } = await readMultipart(req);
-  const id = fields.id;
-  if (!id) return send(res, 400, { error: 'Missing template id' });
-
-  const slug = id.replace(/^tpl-/, '');
-  const docxPath = path.join(TEMPLATES_DIR, slug + '.docx');
-  try {
-    await fs.unlink(docxPath);
-  } catch { /* ignore missing files (built-ins, already-removed, ...) */ }
-  return send(res, 200, { ok: true });
-}
-
 // PUT /studio-api/catalog
 // Body: JSON array — the full template collection the client currently has.
 //
@@ -276,71 +168,6 @@ async function handleCatalog(req, res) {
   await fs.mkdir(path.dirname(CATALOG_FILE), { recursive: true });
   await fs.writeFile(CATALOG_FILE, JSON.stringify(parsed, null, 2));
   return send(res, 200, { ok: true, count: parsed.length });
-}
-
-// POST /studio-api/import
-// Forwards a .docx (multipart) to the public Syncfusion DocumentEditor Import
-// web service and returns the SFDT text. This is a same-origin proxy so the
-// browser avoids the CORS error it gets when calling the server
-// directly (the dev server is on 5173, the .NET server is on
-// `${BACKEND_BASE_URL}`).
-// The .NET service exposes the Syncfusion-compatible Import endpoint
-// at /api/DocumentEditor/Import.
-const SYNC_IMPORT_URL = `${BACKEND_BASE_URL}/api/DocumentEditor/Import`;
-
-async function handleImport(req, res) {
-  const { fields, files } = await readMultipart(req);
-  const docxFile = files.docx;
-  if (!docxFile) return send(res, 400, { error: 'Missing docx file' });
-
-  // Re-wrap the docx bytes + any extra form fields (e.g. `FileName`) into
-  // a fresh multipart body and forward to the backend. The backend's
-  // Import endpoint uses the file's extension to infer the format and
-  // currently ignores other form fields, but the Save endpoint picks up
-  // `FileName` to overwrite <name>.docx — we forward everything we get
-  // so a single round-trip supplies both name + bytes.
-  const boundary = '----studio-import-' + Date.now().toString(36);
-  const parts = [];
-  // Forward any non-file fields the client supplied (FileName, ...).
-  for (const [k, v] of Object.entries(fields)) {
-    parts.push(
-      Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`,
-      ),
-    );
-  }
-  // The .docx file part — the backend's Import reads the first file in
-  // IFormCollection (`data.Files[0]`), so this MUST be sent as the file
-  // part under any name; the existing Syncfusion convention is `files`.
-  parts.push(
-    Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${docxFile.filename || 'template.docx'}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
-    ),
-  );
-  parts.push(docxFile.data);
-  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
-  const fwdBody = Buffer.concat(parts);
-
-  const upstream = await fetch(SYNC_IMPORT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': `multipart/form-data; boundary=${boundary}`,
-      'Content-Length': String(fwdBody.length),
-    },
-    body: fwdBody,
-  });
-
-  if (!upstream.ok) {
-    const text = await upstream.text().catch(() => '');
-    return send(res, 502, { error: `Syncfusion Import failed (${upstream.status})`, detail: text.slice(0, 500) });
-  }
-  // The Syncfusion service returns the SFDT as either plain text or JSON
-  // like { sfdt: "..." }. Pass through whatever came back so the client can
-  // call DocumentEditor.open() with it.
-  res.statusCode = 200;
-  res.setHeader('Content-Type', upstream.headers.get('content-type') || 'text/plain');
-  const buf = Buffer.from(await upstream.arrayBuffer());
-  res.end(buf);
 }
 
 async function handleAddMergeField(req, res) {
@@ -470,9 +297,6 @@ export function studioTemplateFiles() {
         const route = url.pathname.slice(API_PREFIX.length);
 
         try {
-          if (req.method === 'POST' && route === '/upload') return await handleUpload(req, res);
-          if (req.method === 'POST' && route === '/delete') return await handleDelete(req, res);
-          if (req.method === 'POST' && route === '/import') return await handleImport(req, res);
           if (req.method === 'PUT' && route === '/catalog') return await handleCatalog(req, res);
           if (req.method === 'GET' && route === '/common-fields') return await handleCommonFields(req, res);
           if (req.method === 'POST' && route === '/mergefield') return await handleAddMergeField(req, res);
