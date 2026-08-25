@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonComponent } from '@syncfusion/ej2-react-buttons';
 import { MERGE_FIELDS } from '../data/sampleTemplates.js';
-import { addCustomMergeField } from '../utils/studioStorage.js';
+import { addCommonMergeField } from '../utils/studioStorage.js';
 
 // Build a flat list of field descriptors for the currently selected template.
 // Each field is just its `FieldName`. `customMap` (optional) augments the
@@ -33,7 +33,10 @@ function listFields(fieldKeys, customMap, commonFieldsProp) {
   }
   // 2. Common (global) keys — appended after the template's own fields
   //    so they show up in every template's panel and persist across
-  //    reloads (loaded from common-merge-fields.json at app startup).
+  //    reloads (loaded from the .NET service's
+  //    /api/TemplateStudio/merge-fields/common endpoint at app
+  //    startup; the server stores them in
+  //    Server-side/wwwroot/Templates/common-merge-fields.json).
   for (const k of Object.keys(commonFieldsProp || {})) {
     if (MERGE_FIELDS[k] || (customMap && customMap[k])) push(k);
   }
@@ -98,29 +101,24 @@ function MergeFieldsPanel({
     if (v) { setError(v); return; }
     setError('');
     setSaving(true);
-    try {
-      
-      const result = await addCustomMergeField({
-        scope,
-        templateId: scope === 'template' ? template?.id : undefined,
-        // Pass through the template's identifying info so the server can
-        // bootstrap a fresh .json metadata file when the template hasn't
-        // been saved to disk yet (e.g. the in-memory blank "General
-        // Correspondence" template).
-        templateName: template?.name,
-        templateType: template?.type,
-        templateDescription: template?.description,
-        key: key.trim()
-      });
+    try {      
+      const result =
+        scope === 'common'
+          ? await addCommonMergeField(key.trim())
+          : await addTemplateMergeField(
+              template.id,
+              key.trim(),
+            );
       // Bubble the new field up so the parent (TemplateViewer) can refresh
       // its in-memory catalogs and the editor insert path.
       if (onCustomFieldAdded) {
-        onCustomFieldAdded({
+        onCustomFieldAdded?.({
           scope,
-          templateId: scope === 'template' ? template?.id : null,
+          templateId:
+            scope === 'template'
+              ? template.id
+              : null,
           key: result.key,
-          field: result.field,
-          fieldKeys: result.fieldKeys || null, // present for template scope
         });
       }
       setShowAdd(false);

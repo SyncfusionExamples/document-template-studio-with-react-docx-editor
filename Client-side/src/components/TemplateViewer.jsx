@@ -60,11 +60,11 @@ function captureThumbnailFromEditor(editor, { settleMs = 500 } = {}) {
 //     `template.fieldKeys` (any key not in MERGE_FIELDS is treated as a
 //     custom field) plus any new fields added via the "Add Field" UI.
 //   - common (global) custom fields (key -> true). The Common catalog is
-//     owned by App (which loads it from the dev server on startup and
+//     owned by App (which loads it from the .NET service on startup and
 //     forwards it down as a prop) so that every TemplateViewer sees the
 //     same source of truth and new common fields are immediately visible
 //     across all templates (and persist across reloads — the server
-//     writes them to src/data/common-merge-fields.json).
+//     writes them to Server-side/wwwroot/Templates/common-merge-fields.json).
 // Both are exposed to the MergeFieldsPanel as `customFieldMap` so newly
 // added fields are immediately insertable in the editor.
 
@@ -103,6 +103,12 @@ function TemplateViewer({
   onTemplateFieldKeyAdded = () => {},
   onRequestPublish = () => {},
   registerPublishExecutor = () => {},
+  // Autonomously run the editor's Save round-trip on a freshly-added
+  // blank template ("+ New Template") so the user doesn't have to
+  // press "Save and Publish" before the template has any docxUrl —
+  // App.jsx's "+ New Template" flow awaits this executor and stitches
+  // `docxUrl` + `thumbnail` into the freshly-registered catalog row.
+  registerAddExecutor = () => {},
   onPublished = () => {},
   onSaved = () => {},
   existingCategories: _existingCategories = [],
@@ -156,8 +162,10 @@ function TemplateViewer({
   //   3. serialize the SFDT,
   //   4. POST it to /api/DocumentEditor/Save with the same `slug` that
   //      App.jsx baked into the template id, then
-  //   5. notify App.jsx so it can commit `docxUrl` + `thumbnailUrl` to
-  //      templates.json AND clear the browser File from React state.
+  //   5. notify App.jsx so it can register the new template with the
+  //      .NET TemplateStudioController.CreateTemplate endpoint
+  //      (which persists to wwwroot/Templates/templates.json) AND
+  //      clear the browser File from React state.
   // If any step fails the catch in `loadTemplateIntoEditor` translates
   // it back to `onInitialUploadFailed`, which removes the transient
   // template and returns to the dashboard.
@@ -207,6 +215,10 @@ function TemplateViewer({
     // catalog entry, then clears the File from React state.
     onInitialUploadSaved({
       templateId: tpl.id,
+      name: tpl.name,
+      type: tpl.type,
+      description: tpl.description,
+      fieldKeys: tpl.fieldKeys || [],
       docxBaseName,
       thumbnailDataUri,
       pageCount,
@@ -348,20 +360,26 @@ function TemplateViewer({
       // already-rendered panel sees it via the commonFieldsProp below.
       onCommonFieldAdded(info.key, info.field);
     }
-    if (info.scope === 'template' && Array.isArray(info.fieldKeys) && template) {
-      // Mirror the new fieldKeys onto the in-memory template object so
-      // MergeFieldsPanel (which reads template.fieldKeys directly) sees
-      // the freshly-added chip for the rest of the session, and tell App
-      // so the templates.json catalog reflects the new fieldKeys too.
-      template.fieldKeys = info.fieldKeys;
-      onTemplateFieldKeyAdded(template.id, info.fieldKeys);
+    if (info.scope === 'template' && template) {
+      const nextFieldKeys = [
+        ...(template.fieldKeys || []),
+        info.key,
+      ];
+
+      template.fieldKeys = nextFieldKeys;
+
+      onTemplateFieldKeyAdded?.(
+        template.id,
+        nextFieldKeys,
+      );
     }
   };
 
   // Combined custom-field lookup passed to the panel: per-template first,
   // then common, so per-template entries can override a common one.
   // The "common" half comes from App (so it's shared across templates and
-  // survives reloads via the server-persisted common-merge-fields.json).
+  // survives reloads via the server-persisted
+  // Server-side/wwwroot/Templates/common-merge-fields.json).
   const combinedCustomFields = useMemo(
     () => ({ ...commonFieldsProp, ...customFieldMap }),
     [commonFieldsProp, customFieldMap],
@@ -409,7 +427,7 @@ function TemplateViewer({
   // publish dialog in App.jsx via `onRequestPublish`, which collects
   // the name + category and then calls back into `publishExecuteRef`
   // to do the actual Save. The dialog's confirmPublish handler in
-  // App.jsx updates `templates.json` afterwards (sets `docxUrl`, drops
+  // App.jsx updates the .NET catalog afterwards (sets `docxUrl`, drops
   // `seedLines`) so a reload loads from wwwroot/Templates/.
   const [isSaving, setIsSaving] = useState(false);
   // Hold a "pending publish" target so the dialog's confirm step can
@@ -422,7 +440,8 @@ function TemplateViewer({
   // Register the publish-execute function with App.jsx so the publish
   // dialog's confirm handler can call into the editor to do the Save.
   // The function returns { docxBaseName, thumbnailDataUri } which the
-  // dialog uses to update templates.json.
+  // dialog uses to update the .NET catalog (which writes to
+  // wwwroot/Templates/templates.json on disk).
   useEffect(() => {
     registerPublishExecutor(async ({ name }) => {
       const inst = editorRef.current;
@@ -480,6 +499,53 @@ function TemplateViewer({
       registerPublishExecutor(null);
     };
   }, [template?.id, registerPublishExecutor, onPublished]);
+
+  // Add executor: same Save round-trip as the publish executor but
+  // driven by App.jsx's "+ New Template" handler instead of the
+  // publish dialog. The executor resolves to
+  // `{ docxBaseName, thumbnailDataUri }`, which App.jsx then forwards
+  // into CreateTemplate so the new catalog row carries a real
+  // `docxUrl` (per requirement: "+ New Template must call
+  // DocumentEditorController.Save internally and append docxUrl").
+  useEffect(() => {
+    registerAddExecutor(async ({ name }) => {
+      const inst = editorRef.current;
+      if (!inst) throw new Error('Editor is not ready.');
+      const de = inst.documentEditor;
+      let sfdtContent = '';
+      try {
+        sfdtContent = de.serialize();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[add] serialize SFDT failed:', err);
+        throw new Error('Could not serialize the document. Please try again.');
+      }
+      if (!sfdtContent) {
+        throw new Error('Document serialized to an empty payload.');
+      }
+      const base = (name || template.name || 'template').replace(/\.[^.]+$/, '').trim();
+      const slug = `${base.replace(/[^A-Za-z0-9-_]+/g, '_').replace(/^_+|_+$/g, '') || 'template'}-${Date.now().toString(36)}`;
+      const saveResult = await saveTemplateToServer({
+        sfdtContent,
+        documentName: slug,
+        format: 'Docx',
+      });
+      // eslint-disable-next-line no-console
+      console.log(`[studio] "${template.name}" added via DocumentEditorController.Save -> ${saveResult.fileName}.docx`);
+      let thumbnailDataUri = '';
+      try {
+        thumbnailDataUri = await captureThumbnailFromEditor(de) || '';
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[add] thumbnail capture failed:', err);
+      }
+      setDirty(false);
+      return { docxBaseName: saveResult.fileName || slug, thumbnailDataUri };
+    });
+    return () => {
+      registerAddExecutor(null);
+    };
+  }, [template?.id, registerAddExecutor]);
 
   // The Save button entry point. When the template has already been
   // published (docxUrl present), we save directly to the same slug.
