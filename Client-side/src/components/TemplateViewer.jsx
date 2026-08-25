@@ -318,23 +318,41 @@ function TemplateViewer({
       onCommonFieldAdded(info.key, info.field);
     }
     if (info.scope === 'template' && Array.isArray(info.fieldKeys) && template) {
-      // Mirror the new fieldKeys onto the in-memory template object so
-      // MergeFieldsPanel (which reads template.fieldKeys directly) sees
-      // the freshly-added chip for the rest of the session, and tell App
-      // so the templates.json catalog reflects the new fieldKeys too.
-      template.fieldKeys = info.fieldKeys;
+      // No direct prop mutation: rely on the App-side immutable update
+      // via onTemplateFieldKeyAdded (setTemplates: prev => prev.map(...))
+      // so render + the auto-save useEffect see the new fieldKeys. The
+      // previous in-place assignment to `template.fieldKeys` corrupted
+      // React's reference equality model before the parent state was
+      // updated, which could let the pre-update snapshot leak through to
+      // saveTemplatesCatalog and erase the freshly-added field on disk.
       onTemplateFieldKeyAdded(template.id, info.fieldKeys);
     }
   };
 
-  // Combined custom-field lookup passed to the panel: per-template first,
-  // then common, so per-template entries can override a common one.
-  // The "common" half comes from App (so it's shared across templates and
-  // survives reloads via the server-persisted common-merge-fields.json).
-  const combinedCustomFields = useMemo(
-    () => ({ ...commonFieldsProp, ...customFieldMap }),
-    [commonFieldsProp, customFieldMap],
-  );
+  // Combined custom-field lookup passed to the panel. We layer the data
+  // sources in priority order, with the most-trusted (server-known)
+  // sources first:
+  //   1. Template-scoped custom fields — derived from `template.fieldKeys`
+  //      itself so that any field the server already persisted onto
+  //      disk (e.g. after a page reload, or a field added in a previous
+  //      session) is recognised even without an in-memory "add" event.
+  //      Without this, listFields() in MergeFieldsPanel would filter out
+  //      any custom key that isn't yet in this-session customFieldMap and
+  //      the user sees the field "disappear" from the chip list on every
+  //      reload — even though it is still in templates.json.
+  //   2. Common (global) custom fields — loaded from disk by App so they
+  //      persist across sessions.
+  //   3. Session-only additions (from this session's "Add Field" events)
+  //      added last so they always win on equality.
+  const combinedCustomFields = useMemo(() => {
+    const templateScoped = {};
+    if (template && Array.isArray(template.fieldKeys)) {
+      for (const k of template.fieldKeys) {
+        templateScoped[k] = true;
+      }
+    }
+    return { ...templateScoped, ...commonFieldsProp, ...customFieldMap };
+  }, [template, commonFieldsProp, customFieldMap]);
 
   // Insert a merge field at the current caret using the editor's API.
   // Falls back to the custom-field map for user-added fields
@@ -345,8 +363,18 @@ function TemplateViewer({
   const insertField = (key) => {
     const inst = editorRef.current;
     if (!inst) return;
-    const f = MERGE_FIELDS[key] || customFieldMap[key] || commonFieldsProp[key];
-    if (!f) return;
+    // `template.fieldKeys` is also recognised via combinedCustomFields
+    // (which is built from template.fieldKeys + commonFieldsProp +
+    // customFieldMap) so user-added fields are insertable even before
+    // they appear in MERGE_FIELDS or the commonFields catalog. This
+    // is what makes newly-added custom fields click-to-insert work
+    // reliably — previously the search only checked MERGE_FIELDS and
+    // commonFieldsProp, both of which are empty for a template-scoped
+    // custom field at the moment the user first clicks the new chip.
+    const f = MERGE_FIELDS[key]
+      || combinedCustomFields?.[key]
+      || customFieldMap?.[key]
+      || commonFieldsProp?.[key];
     let fieldName = key
         .replace(/\n/g, "")
         .replace(/\r/g, "")

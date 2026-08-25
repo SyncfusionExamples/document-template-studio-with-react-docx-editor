@@ -48,6 +48,33 @@ namespace DocumentTemplateStudioService.Controllers
         // catalog payload here.
         private static readonly Regex SafeId = new("^[A-Za-z0-9_\\-\\.]+$");
 
+        // Coerce a JSON-element value (the shape returned by
+        // `JsonSerializer.Deserialize<object>`) into a List<string> of
+        // template field keys. Returns an empty list for missing/non-array/
+        // non-string-element inputs instead of throwing — the contract is
+        // "best-effort merge field extraction", and a malformed entry
+        // should not block the caller's update.
+        private static List<string> CoerceFieldKeys(JsonElement el)
+        {
+            var result = new List<string>();
+            if (el.ValueKind != JsonValueKind.Array)
+            {
+                return result;
+            }
+            foreach (var item in el.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    var s = item.GetString();
+                    if (!string.IsNullOrEmpty(s) && !result.Contains(s))
+                    {
+                        result.Add(s);
+                    }
+                }
+            }
+            return result;
+        }
+
         public StudioController()
         {
             // Make sure both folders exist at startup. Use lazy init so a
@@ -271,6 +298,16 @@ namespace DocumentTemplateStudioService.Controllers
                     foreach (var prop in existingEntry.Value.EnumerateObject())
                     {
                         entryDict[prop.Name] = JsonSerializer.Deserialize<object>(prop.Value.GetRawText())!;
+                    }
+                    // `JsonSerializer.Deserialize<object>` turns a JSON array
+                    // into a `JsonElement`, not a `List<string>`. Without
+                    // this coercion the `is List<string>` check below always
+                    // fails, so the existing fieldKeys array is silently
+                    // replaced with [] on every save and any user-added
+                    // merge field appears to "disappear" the next reload.
+                    if (entryDict.TryGetValue("fieldKeys", out var rawKeys) && rawKeys is JsonElement keysEl)
+                    {
+                        entryDict["fieldKeys"] = CoerceFieldKeys(keysEl);
                     }
                 }
                 else
