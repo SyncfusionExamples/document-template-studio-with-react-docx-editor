@@ -128,47 +128,23 @@ function TemplateViewer({
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // Recover the server-side slug App.jsx baked into the template id
-  // (`tpl-<slug>`). For templates without an upload-style id (e.g.
-  // "+ New Template" or a template whose id predates this format),
-  // derive a deterministic slug the same way App.jsx does (`name` plus
-  // a timestamp suffix), so the *first* Save lands at a predictable
-  // path and subsequent saves overwrite that exact file.
-  function getUploadSlug(tpl) {
-    const fromId = String(tpl?.id || '').replace(/^tpl-/, '').trim();
-    if (fromId) {
-      // The upload id always embeds a timestamp suffix (`-<base36 ts>`),
-      // so it's already a unique, reopen-safe slug.
-      const tsSep = fromId.lastIndexOf('-');
-      if (tsSep > 0 && fromId.length - tsSep <= 12) return fromId;
-    }
-    const base = (tpl?.name || 'template').replace(/\.[^.]+$/, '').trim();
-    const cleaned = base
-      .replace(/[^A-Za-z0-9-_]+/g, '_')
-      .replace(/^_+|_+$/g, '');
-    return `${cleaned || 'template'}-${Date.now().toString(36)}`;
-  }
-
-  // Initial-upload finalization. After `de.open(sfdt)` has loaded the
-  // Import result we:
+  // After the user uploads a .docx, the server has already written the
+  // file to wwwroot/Templates/<slug>.docx AND added a new entry to
+  // wwwroot/Data/templates.json. App.jsx passes the new template
+  // (with its `docxUrl` populated) to this viewer. We just need to:
   //   1. wait briefly for the layout engine to settle,
   //   2. export page 1 from the LIVE editor (no offscreen container),
-  //   3. serialize the SFDT,
-  //   4. POST it to /api/DocumentEditor/Save with the same `slug` that
-  //      App.jsx baked into the template id, then
-  //   5. notify App.jsx so it can commit `docxUrl` + `thumbnailUrl` to
-  //      templates.json AND clear the browser File from React state.
-  // If any step fails the catch in `loadTemplateIntoEditor` translates
-  // it back to `onInitialUploadFailed`, which removes the transient
-  // template and returns to the dashboard.
+  //   3. notify App.jsx so it can attach the thumbnail to the catalog
+  //      entry and clear the browser File from React state.
+  // If any step fails, the catch in `loadTemplateIntoEditor` translates
+  // it back to `onInitialUploadFailed`, which resets the editor view
+  // and surfaces the error to the user.
   async function initializeUploadedTemplate(de, tpl) {
-    const slug = getUploadSlug(tpl);
-
-    // DocumentEditor.open() has already loaded the imported SFDT. Wait
+    // The server already wrote the .docx, so the editor is now opening
+    // it via the docxUrl path (see loadTemplateIntoEditor below). Wait
     // for the layout engine to settle before exporting the live first
-    // page and serializing the document for the initial server-side
-    // Save. The same editor instance is the source for both thumbnail
-    // and DOCX, so the dashboard card matches what the user sees.
+    // page. The same editor instance is the source for the thumbnail,
+    // so the dashboard card matches what the user sees.
     await waitForEditorSettle();
 
     let thumbnailDataUri = '';
@@ -181,39 +157,16 @@ function TemplateViewer({
       throw new Error('Thumbnail generation returned no image data.');
     }
 
-    let sfdtContent = '';
-    try {
-      sfdtContent = de.serialize();
-    } catch (err) {
-      throw new Error(
-        `Could not serialize the imported document: ${err?.message || err}`,
-      );
-    }
-    if (!sfdtContent) {
-      throw new Error('Imported document serialized to an empty payload.');
-    }
-
-    const saveResult = await saveTemplateToServer({
-      sfdtContent,
-      documentName: slug,
-      format: 'Docx',
-    });
-
-    const docxBaseName = saveResult.fileName || slug;
     const pageCount = Number(de.pageCount) || 0;
 
-    // The browser File is no longer needed after the initial Save. App.jsx
-    // receives the server filename + thumbnail and commits the final
-    // catalog entry, then clears the File from React state.
     onInitialUploadSaved({
       templateId: tpl.id,
-      docxBaseName,
       thumbnailDataUri,
       pageCount,
     });
 
     setDirty(false);
-    return { docxBaseName, thumbnailDataUri, pageCount };
+    return { thumbnailDataUri, pageCount };
   }
 
   async function loadTemplateIntoEditor(de, tpl, uploadedFile = null) {
@@ -221,18 +174,15 @@ function TemplateViewer({
     // is kept true until the initial upload transaction has completed.
     isLoadingRef.current = true;
 
-    // New upload: the browser File is imported directly into the
-    // ASP.NET Core DocumentEditor Import API (no Vite filesystem write,
-    // no FileReader round-trip). Nothing is written by the Vite plugin.
+    // New upload: the browser File is imported into the ASP.NET Core
+    // DocumentEditor Import API so the editor can render it. The server
+    // already has the file on disk (it was uploaded in the same
+    // transaction) — we never call Save again here.
     if (uploadedFile && !tpl.docxUrl) {
       const baseName = (tpl.name || '').replace(/\.docx$/i, '').trim();
       try {
         const sfdt = await fetchSfdtFromDocx({ file: uploadedFile, name: baseName });
         de.open(sfdt);
-        // The same live editor now supplies the thumbnail and the
-        // initial SFDT Save. isLoadingRef stays true until that
-        // round-trip has completed so a contentChange fired during
-        // open() does not mark the document user-edited.
         await initializeUploadedTemplate(de, tpl);
         isLoadingRef.current = false;
       } catch (err) {
@@ -242,13 +192,32 @@ function TemplateViewer({
       return;
     }
 
-    // Existing persisted template: preserve the current behavior.
+    // Existing persisted template: open the .docx from the server.
     if (tpl.docxUrl) {
       const baseName = (tpl.name || '').replace(/\.docx$/i, '').trim();
       try {
         const sfdt = await fetchSfdtFromDocx({ url: tpl.docxUrl, name: baseName });
         de.open(sfdt);
         isLoadingRef.current = false;
+        // If the template was just uploaded we still want to capture a
+        // thumbnail and clear the in-flight File from App state.
+        if (uploadedFile) {
+          try {
+            await waitForEditorSettle();
+            const thumbnailDataUri = await captureThumbnailFromEditor(de) || '';
+            if (thumbnailDataUri) {
+              const pageCount = Number(de.pageCount) || 0;
+              onInitialUploadSaved({
+                templateId: tpl.id,
+                thumbnailDataUri,
+                pageCount,
+              });
+            }
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn('thumbnail capture failed:', err);
+          }
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('DOCX import failed:', err);
@@ -349,23 +318,41 @@ function TemplateViewer({
       onCommonFieldAdded(info.key, info.field);
     }
     if (info.scope === 'template' && Array.isArray(info.fieldKeys) && template) {
-      // Mirror the new fieldKeys onto the in-memory template object so
-      // MergeFieldsPanel (which reads template.fieldKeys directly) sees
-      // the freshly-added chip for the rest of the session, and tell App
-      // so the templates.json catalog reflects the new fieldKeys too.
-      template.fieldKeys = info.fieldKeys;
+      // No direct prop mutation: rely on the App-side immutable update
+      // via onTemplateFieldKeyAdded (setTemplates: prev => prev.map(...))
+      // so render + the auto-save useEffect see the new fieldKeys. The
+      // previous in-place assignment to `template.fieldKeys` corrupted
+      // React's reference equality model before the parent state was
+      // updated, which could let the pre-update snapshot leak through to
+      // saveTemplatesCatalog and erase the freshly-added field on disk.
       onTemplateFieldKeyAdded(template.id, info.fieldKeys);
     }
   };
 
-  // Combined custom-field lookup passed to the panel: per-template first,
-  // then common, so per-template entries can override a common one.
-  // The "common" half comes from App (so it's shared across templates and
-  // survives reloads via the server-persisted common-merge-fields.json).
-  const combinedCustomFields = useMemo(
-    () => ({ ...commonFieldsProp, ...customFieldMap }),
-    [commonFieldsProp, customFieldMap],
-  );
+  // Combined custom-field lookup passed to the panel. We layer the data
+  // sources in priority order, with the most-trusted (server-known)
+  // sources first:
+  //   1. Template-scoped custom fields — derived from `template.fieldKeys`
+  //      itself so that any field the server already persisted onto
+  //      disk (e.g. after a page reload, or a field added in a previous
+  //      session) is recognised even without an in-memory "add" event.
+  //      Without this, listFields() in MergeFieldsPanel would filter out
+  //      any custom key that isn't yet in this-session customFieldMap and
+  //      the user sees the field "disappear" from the chip list on every
+  //      reload — even though it is still in templates.json.
+  //   2. Common (global) custom fields — loaded from disk by App so they
+  //      persist across sessions.
+  //   3. Session-only additions (from this session's "Add Field" events)
+  //      added last so they always win on equality.
+  const combinedCustomFields = useMemo(() => {
+    const templateScoped = {};
+    if (template && Array.isArray(template.fieldKeys)) {
+      for (const k of template.fieldKeys) {
+        templateScoped[k] = true;
+      }
+    }
+    return { ...templateScoped, ...commonFieldsProp, ...customFieldMap };
+  }, [template, commonFieldsProp, customFieldMap]);
 
   // Insert a merge field at the current caret using the editor's API.
   // Falls back to the custom-field map for user-added fields
@@ -376,8 +363,18 @@ function TemplateViewer({
   const insertField = (key) => {
     const inst = editorRef.current;
     if (!inst) return;
-    const f = MERGE_FIELDS[key] || customFieldMap[key] || commonFieldsProp[key];
-    if (!f) return;
+    // `template.fieldKeys` is also recognised via combinedCustomFields
+    // (which is built from template.fieldKeys + commonFieldsProp +
+    // customFieldMap) so user-added fields are insertable even before
+    // they appear in MERGE_FIELDS or the commonFields catalog. This
+    // is what makes newly-added custom fields click-to-insert work
+    // reliably — previously the search only checked MERGE_FIELDS and
+    // commonFieldsProp, both of which are empty for a template-scoped
+    // custom field at the moment the user first clicks the new chip.
+    const f = MERGE_FIELDS[key]
+      || combinedCustomFields?.[key]
+      || customFieldMap?.[key]
+      || commonFieldsProp?.[key];
     let fieldName = key
         .replace(/\n/g, "")
         .replace(/\r/g, "")

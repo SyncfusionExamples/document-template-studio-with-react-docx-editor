@@ -26,16 +26,24 @@ function listFields(fieldKeys, customMap, commonFieldsProp) {
     seen.add(k);
     out.push({ key: k });
   };
-  // 1. Template-scoped keys (built-in or template-custom) — preserve
-  //    the original order from `fieldKeys`.
+  // `template.fieldKeys` is the source of truth for what fields belong to
+  // this template — anything in there MUST show in the chip list, even if
+  // the field is template-scoped custom and not yet in the in-memory
+  // `customMap` (e.g. fields the server already persisted on a previous
+  // session, or fields added via the API in this session before
+  // setCustomFieldMap commits). The previous filter
+  // (`MERGE_FIELDS[k] || customMap[k]`) silently dropped exactly those
+  // fields, which is the user-visible symptom of the bug we're fixing.
   for (const k of (fieldKeys || [])) {
-    if (MERGE_FIELDS[k] || (customMap && customMap[k])) push(k);
+    push(k);
   }
-  // 2. Common (global) keys — appended after the template's own fields
-  //    so they show up in every template's panel and persist across
-  //    reloads (loaded from common-merge-fields.json at app startup).
+  // Common (global) keys — appended after the template's own fields so
+  // they show up in every template's panel and persist across reloads
+  // (loaded from common-merge-fields.json at app startup).
   for (const k of Object.keys(commonFieldsProp || {})) {
-    if (MERGE_FIELDS[k] || (customMap && customMap[k])) push(k);
+    // Avoid re-adding a key already in fieldKeys (template-scoped takes
+    // precedence in the UI), and skip unknown common-field keys.
+    push(k);
   }
   return out;
 }

@@ -10,15 +10,18 @@ import {
   NEW_TEMPLATE_FIELD_KEYS,
   DOCUMENT_EDITOR_BASE_URL
 } from './data/sampleTemplates.js';
-// Single source of truth for every .docx-backed template the studio
-// ships with. Each entry's `docxUrl` points at the Server-sde static
-// file in `wwwroot/Templates/` (served via `app.UseStaticFiles()`).
-import TEMPLATE_CATALOG from './data/templates.json';
+// The template catalog is now maintained entirely on the server
+// (Server-side/wwwroot/Data/templates.json) by the ASP.NET Core
+// StudioController. The client fetches it on startup, sends the full
+// collection back on each save, and delegates uploads to a single
+// server-side endpoint that writes the .docx + the catalog entry.
 import {
+  fetchTemplatesCatalog,
   saveTemplatesCatalog,
   getHiddenBuiltInIds,
   hideBuiltInTemplate,
   fetchCommonMergeFields,
+  uploadTemplate,
 } from './utils/studioStorage.js';
 import './App.css';
 
@@ -40,66 +43,70 @@ function absoluteDocxUrl(docxUrl) {
   return `${DOCUMENT_EDITOR_BASE_URL}/Templates/${docxUrl}`;
 }
 
-// Helper to generate a unique id for new (blank) templates.
+// Helper to generate a unique id for new (blank) templates. The server
+// assigns its own slug on upload, so for client-only blank templates
+// (no .docx yet) this id is purely a React-state identifier.
 function makeId(prefix = 'tpl') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-// Generate the stable server-side slug used by the automatic first save
-// for an uploaded template. The same slug is stored in the template id
-// (`tpl-<slug>`) so the subsequent Save & Publish flow overwrites the
-// same DOCX file.
-function makeUploadSlug(name) {
-  const base = (name || 'template').replace(/\.[^.]+$/, '').trim();
-  const cleaned = base.replace(/[^A-Za-z0-9-_]+/g, '_').replace(/^_+|_+$/g, '');
-  return `${cleaned || 'template'}-${Date.now().toString(36)}`;
-}
-
-// The ids of the original built-in entries that ship with templates.json.
-// We use this to detect "is this id from the static catalog?" so deleting
-// a built-in is treated as a client-side hide (no .docx unlink) while
-// deleting a user-uploaded template removes its .docx from the server.
-const BUILTIN_IDS = new Set(TEMPLATE_CATALOG.map((t) => t.id));
+// The ids of the entries the server shipped with on first fetch. We use
+// this to detect "is this id from the seeded catalog?" so deleting a
+// built-in is treated as a client-side hide (no .docx unlink) while
+// deleting a user-uploaded template removes its entry from the
+// server-side catalog file.
+let BUILTIN_IDS = new Set();
 
 function App() {
-  // Seed the catalog from the static templates.json shipped with the app.
-  // These .docx files live on the server (Server-sde/wwwroot/Templates/)
-  // and are served via `app.UseStaticFiles()`. The mapping below tells
-  // the client where each .docx can be fetched from. Built-in templates
-  // the user has previously removed are filtered out via localStorage so
-  // the deletion persists across reloads / service restarts.
-  const [templates, setTemplates] = useState(() => {
-    const hidden = new Set(getHiddenBuiltInIds());
-    // Normalize legacy relative URLs (`/Templates/<slug>.docx`) to the
-    // absolute form so subsequent `fetch()` calls hit the .NET service
-    // directly. Newly-written entries from this app already use the
-    // absolute shape; this is purely a back-compat step for catalog
-    // files produced before this refactor.
-    return TEMPLATE_CATALOG
-      .filter((t) => !hidden.has(t.id))
-      .map((t) => (
-        t.docxUrl && !/^[a-z][a-z0-9+.-]*:\/\//i.test(t.docxUrl)
-          ? { ...t, docxUrl: absoluteDocxUrl(t.docxUrl) }
-          : t
-      ));
-  });
+  // Catalog is now fetched from the server on first mount. We start with
+  // an empty list and let `loadCatalogFromServer` populate it. Built-in
+  // templates the user has previously removed are filtered out via
+  // localStorage so the deletion persists across reloads / service
+  // restarts. The fetched .docx URLs are server-relative
+  // (`/Templates/<slug>.docx`) and are resolved to absolute URLs by
+  // `absoluteDocxUrl` for the Syncfusion DocumentEditor import path.
+  const [templates, setTemplates] = useState([]);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   // null  = dashboard view; an id = that template opened in the editor.
   const [selectedId, setSelectedId] = useState(null);
   const deleteDialogRef = useRef(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  // Global (common) merge-field catalog, loaded once at app startup from
-  // the dev server. The same source of truth is forwarded to every
-  // TemplateViewer so that adding a common field on one template is
-  // immediately visible in every other template's panel and persists
-  // across reloads (the server writes to src/data/common-merge-fields.json).
-  // `commonFields` is a flat { key: true } map of recognized keys.
+  // Initial load: fetch the server-side catalog and the common merge
+  // fields in parallel. The same common-fields source of truth is
+  // forwarded to every TemplateViewer so adding a common field on one
+  // template is immediately visible in every other template's panel and
+  // persists across reloads (the server writes to
+  // wwwroot/Data/common-merge-fields.json).
   const [commonFields, setCommonFields] = useState({});
   useEffect(() => {
     let cancelled = false;
-    fetchCommonMergeFields().then((m) => {
-      if (!cancelled) setCommonFields(m || {});
-    });
+    Promise.all([fetchTemplatesCatalog(), fetchCommonMergeFields()])
+      .then(([catalog, fields]) => {
+        if (cancelled) return;
+        const hidden = new Set(getHiddenBuiltInIds());
+        // Capture the built-in ids the first time we load the catalog
+        // so subsequent deletes can be classified as hide-vs-remove.
+        BUILTIN_IDS = new Set(catalog.map((t) => t.id));
+        // Normalize legacy absolute URLs to the absolute form so the
+        // Syncfusion DocumentEditor import path always talks to the .NET
+        // service directly.
+        const normalized = catalog
+          .filter((t) => !hidden.has(t.id))
+          .map((t) => (
+            t.docxUrl && !/^[a-z][a-z0-9+.-]*:\/\//i.test(t.docxUrl)
+              ? { ...t, docxUrl: absoluteDocxUrl(t.docxUrl) }
+              : t
+          ));
+        setTemplates(normalized);
+        setCommonFields(fields || {});
+        setCatalogLoaded(true);
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('[catalog] initial load failed:', err);
+        setCatalogLoaded(true);
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -226,43 +233,32 @@ function App() {
     }
   }, [publishTarget, publishName, publishCategory, publishPurpose, cancelPublish]);
 
-  // ----- Persist the template collection back to disk -----
-  // templates.json is the single source of truth on the client side and
-  // its on-disk copy lives at src/data/templates.json. The dev plugin
-  // exposes PUT /studio-api/catalog to write the file. Skip the very first
-  // render so we don't immediately rewrite the file we just read.
+  // ----- Persist the template collection back to the server -----
+  // The server is authoritative: wwwroot/Data/templates.json is the
+  // single source of truth and we PUT the full collection whenever it
+  // changes. We skip the very first render so we don't immediately
+  // rewrite the file we just loaded, and we wait for the initial
+  // catalog fetch to complete (catalogLoaded) so transient empty-state
+  // renders don't wipe the server file.
   //
   // The full collection (including the `thumbnailUrl` data URI on each
-  // entry) is persisted as-is so the on-disk catalog is the single home of
-  // thumbnail images too — no separate .png files, no re-generation on
-  // every load. Once a thumbnail has been rendered for a template it is
-  // cached inside the catalog entry for subsequent reloads.
+  // entry) is persisted as-is so the on-disk catalog is the single home
+  // of thumbnail images too — no separate .png files, no re-generation
+  // on every load. Once a thumbnail has been rendered for a template
+  // it is cached inside the catalog entry for subsequent reloads.
   const firstRenderRef = useRef(true);
   useEffect(() => {
     if (firstRenderRef.current) {
       firstRenderRef.current = false;
       return;
     }
+    if (!catalogLoaded) return;
 
-    // A newly selected upload is temporarily kept in React state while
-    // TemplateViewer imports it, opens it, generates its thumbnail, and
-    // performs the initial DocumentEditor Save. Do NOT write that
-    // transient entry to templates.json before the DOCX exists on the
-    // server — its `docxUrl` would be empty and a reload would lose it.
-    const persistedCatalog = templates
-      .filter((t) => !t._pendingUpload)
-      .map((t) => {
-        const next = { ...t };
-        delete next._pendingUpload;
-        delete next._autoDescription;
-        return next;
-      });
-
-    saveTemplatesCatalog(persistedCatalog).catch((err) => {
+    saveTemplatesCatalog(templates).catch((err) => {
       // eslint-disable-next-line no-console
       console.warn('[catalog] saveTemplatesCatalog failed:', err);
     });
-  }, [templates]);
+  }, [templates, catalogLoaded]);
 
   // "+ New Template" creates a blank template doc + its merge-field set,
   // places it in the sidebar list, and opens it immediately so the user
@@ -283,12 +279,14 @@ function App() {
     setSelectedId(id);
   }, []);
 
-  // ---- Upload flow (requirement 1) ----
-  // The uploaded File is kept only in App state while the TemplateViewer
-  // performs the document-level initialization. No Vite filesystem
-  // upload is performed. The transient template gets a stable id of
-  // `tpl-<slug>` so the automatic Save and all later saves target the
-  // same DOCX.
+  // ---- Upload flow ----
+  // The dialog collects the .docx + metadata. On confirm we POST it
+  // to the server's /api/studio/upload endpoint, which writes the
+  // .docx to wwwroot/Templates/<slug>.docx AND adds a new entry to
+  // wwwroot/Data/templates.json in a single transaction. The returned
+  // entry is added to React state and the editor is opened on it. The
+  // browser File is held in `pendingUpload` until the editor has
+  // rendered and captured a thumbnail.
   const [isUploading, setIsUploading] = useState(false);
   const uploadDialogRef = useRef(null);
   const dialogFileInputRef = useRef(null);
@@ -350,16 +348,12 @@ function App() {
     setPendingUpload({ file, templateId: null });
   }, []);
 
-  // The user confirmed the dialog. We create only a transient React
-  // template and route the original File to TemplateViewer.
-  // TemplateViewer then:
-  //   1. imports DOCX -> SFDT,
-  //   2. opens the SFDT in the live DocumentEditor,
-  //   3. captures the thumbnail from that same editor, and
-  //   4. performs the initial DocumentEditor Save -> DOCX.
-  // Only after those steps succeed do we remove the transient marker
-  // and allow the normal [templates] persistence effect to write
-  // templates.json.
+  // The user confirmed the dialog. We POST the file + metadata to the
+  // server's /api/studio/upload endpoint in a single transaction. The
+  // server writes the .docx to wwwroot/Templates/<slug>.docx AND appends
+  // a new entry to wwwroot/Data/templates.json. We then open the
+  // returned entry in the editor and capture a thumbnail from the live
+  // editor for the dashboard card.
   const confirmUpload = useCallback(async () => {
     const file = pendingUpload?.file;
     if (!file) {
@@ -374,51 +368,59 @@ function App() {
       ? uploadPurpose.trim()
       : 'Uploaded .docx template';
 
-    // Stable slug becomes the template id (`tpl-<slug>`) AND the
-    // DocumentEditor Save FileName, so a later Save & Publish overwrites
-    // the same DOCX that the initial upload wrote.
-    const slug = makeUploadSlug(name);
-    const templateId = `tpl-${slug}`;
-
-    const transientTemplate = {
-      id: templateId,
-      name,
-      type: category,
-      description,
-      fieldKeys: [...NEW_TEMPLATE_FIELD_KEYS],
-      docxUrl: '',
-      thumbnailUrl: '',
-      _pendingUpload: true,           // skip persistence until Save succeeds
-      _autoDescription: !purposeWasProvided, // refresh description with page count
-    };
-
     uploadDialogRef.current?.hide();
     setIsUploadDialogOpen(false);
     setIsUploading(true);
 
-    setTemplates((prev) => {
-      const existingIds = new Set(prev.map((t) => t.id));
-      if (existingIds.has(templateId)) return prev;
-      return [...prev, transientTemplate];
-    });
-    setPendingUpload({ file, templateId });
-    setSelectedId(templateId);
+    try {
+      const result = await uploadTemplate({
+        file,
+        name,
+        type: category,
+        description,
+      });
+      const serverEntry = result?.entry;
+      if (!serverEntry || !serverEntry.id) {
+        throw new Error('Server returned an invalid upload response.');
+      }
+      // Normalize the docxUrl to the absolute form so the editor's
+      // ImportFileURL flow always targets the .NET service directly.
+      const entry = {
+        ...serverEntry,
+        docxUrl: absoluteDocxUrl(serverEntry.docxUrl || `/Templates/${result.docxFileName}`),
+      };
+      setTemplates((prev) => {
+        const existingIds = new Set(prev.map((t) => t.id));
+        if (existingIds.has(entry.id)) {
+          // Server already knows about this id (extremely unlikely);
+          // overwrite the local copy to keep it in sync.
+          return prev.map((t) => (t.id === entry.id ? entry : t));
+        }
+        return [...prev, entry];
+      });
+      setPendingUpload({ file, templateId: entry.id });
+      setSelectedId(entry.id);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[upload] failed:', err);
+      alert(`Upload failed: ${err.message || err}`);
+      setIsUploading(false);
+      setPendingUpload(null);
+    }
   }, [pendingUpload, uploadName, uploadCategory, uploadPurpose]);
 
-  // Successful callback fired by TemplateViewer once the initial
-  // DOCX -> SFDT -> Save round-trip has written the .docx on the server.
-  // Stamps the transient template's `docxUrl` + `thumbnailUrl` + timestamps,
-  // refreshes the auto-description with the page count, clears the
-  // transient flags, and drops the browser File from React state.
+  // Successful callback fired by TemplateViewer once the editor has
+  // finished opening the uploaded .docx and captured its thumbnail. At
+  // this point the server already has the .docx and a catalog entry
+  // (the upload endpoint handled that), so all we do here is attach
+  // the captured thumbnail to the existing entry and clear the
+  // in-flight browser File from React state.
   const handleInitialUploadSaved = useCallback(({
     templateId,
-    docxBaseName,
     thumbnailDataUri = '',
     pageCount = 0,
   } = {}) => {
-    if (!templateId || !docxBaseName) {
-      // Defensive — a missing slug means the Save call should not have
-      // succeeded. Surface it, cancel the pending state, and move on.
+    if (!templateId) {
       setIsUploading(false);
       setPendingUpload(null);
       return;
@@ -426,42 +428,31 @@ function App() {
 
     setTemplates((prev) => prev.map((t) => {
       if (t.id !== templateId) return t;
-      const next = {
-        ...t,
-        docxUrl: absoluteDocxUrl(`/Templates/${docxBaseName}.docx`),
-        uploadedAt: t.uploadedAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      if (t._autoDescription && pageCount > 0) {
+      const next = { ...t };
+      if (pageCount > 0 && (!next.description || next.description.startsWith('Uploaded .docx'))) {
         next.description = `Uploaded .docx (${pageCount} page${pageCount > 1 ? 's' : ''})`;
       }
       if (thumbnailDataUri) next.thumbnailUrl = thumbnailDataUri;
-      delete next._pendingUpload;
-      delete next._autoDescription;
       return next;
     }));
 
-    // The DOCX is now on disk and the catalog mutation above is enough
-    // to keep it. The browser File has done its job and must not be
-    // retained in React state or serialized into templates.json.
     setPendingUpload(null);
     setIsUploading(false);
   }, []);
 
-  // Failure callback fired by TemplateViewer when any step of the
-  // Import -> open -> initial Save sequence errors out. We drop the
-  // transient template entirely (no docxUrl = not a valid catalog
-  // entry) and return the user to the dashboard with an alert.
+  // Failure callback fired by TemplateViewer when the editor cannot
+  // import or open the uploaded .docx. The server already has the file
+  // and the catalog entry, so we keep the entry on disk but alert the
+  // user; the in-memory editor view is reset to the dashboard.
   const handleInitialUploadFailed = useCallback((error) => {
-    setTemplates((prev) => prev.filter((t) => !t._pendingUpload));
     setSelectedId(null);
     setPendingUpload(null);
     setIsUploading(false);
 
     const message = error?.message || String(error || 'Unknown error');
     // eslint-disable-next-line no-console
-    console.error('[upload] initial template initialization failed:', error);
-    alert(`Upload failed: ${message}`);
+    console.error('[upload] editor open failed:', error);
+    alert(`Editor could not open the uploaded template: ${message}`);
   }, []);
 
   const cancelUpload = useCallback(() => {
@@ -506,14 +497,14 @@ function App() {
     if (!deleteTarget) return;
     const id = deleteTarget.id;
     const wasSelected = id === selectedId;
-    // Delete semantics: the in-memory templates list drops the entry,
-    // the templates.json persistence effect writes the new (smaller)
-    // collection, and the .docx on the server stays orphaned but
-    // unreferenced. In a multi-machine deployment the Vite dev server
-    // is on the client machine and cannot reach the .NET server's
-    // wwwroot/Templates folder, so a server-side delete is no longer
-    // possible from here. Built-in ids are also recorded in
-    // localStorage so reloading doesn't bring them back.
+    // Delete semantics: built-in templates are hidden client-side
+    // (the .docx stays on the server, the catalog entry stays on the
+    // server — the next reload uses localStorage to filter them out).
+    // User-uploaded templates are removed from the in-memory list and
+    // the persistence effect PUTs the new (smaller) collection to the
+    // server, so wwwroot/Data/templates.json no longer references
+    // them. The .docx itself is left orphaned (the catalog is the
+    // single source of truth for the UI).
     const isBuiltin = BUILTIN_IDS.has(id);
     if (isBuiltin) {
       hideBuiltInTemplate(id);
@@ -733,11 +724,6 @@ function App() {
                 ? `From current document (${publishTarget.name || 'untitled'})`
                 : 'From current document'}
             </span>
-            <ButtonComponent
-              iconCss="e-icons e-folder-open"
-              cssClass="e-outline ts-upload-browse"
-              disabled
-            >Browse</ButtonComponent>
           </div>
           <label className="ts-upload-label" htmlFor="ts-publish-name">Template name</label>
           <TextBoxComponent
