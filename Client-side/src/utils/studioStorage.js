@@ -1,13 +1,32 @@
+// The .NET backend URL is sourced from `DOCUMENT_EDITOR_BASE_URL` defined
+// in ../data/sampleTemplates.js so the host/port lives in one place. The
+// previous Vite dev plugin endpoints (/studio-api/...) are gone: all
+// metadata operations now go directly to the ASP.NET Core
+// StudioController at /api/studio/...
+
 import { DOCUMENT_EDITOR_BASE_URL } from '../data/sampleTemplates.js';
 
-const API = `${DOCUMENT_EDITOR_BASE_URL}`;
-
+// ASP.NET Core DocumentEditor Import endpoints. `Import` accepts a
+// multipart upload from the browser (upload flow); `ImportFileURL`
+// accepts a JSON `{ fileUrl }` body and the .NET service pulls the
+// .docx from its own wwwroot/Templates/ folder server-side.
 const DOC_EDITOR_IMPORT_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Import`;
 const DOC_EDITOR_IMPORT_FILE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/ImportFileURL`;
+const DOC_EDITOR_SAVE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save`;
+const DOC_EDITOR_MAILMERGE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/MailMerge`;
 
+// Server-side catalog + common-fields endpoints. The catalog JSON file
+// is maintained by the ASP.NET Core service in wwwroot/Data/ and the
+// .docx files live next to it under wwwroot/Templates/.
+const STUDIO_API = `${DOCUMENT_EDITOR_BASE_URL}/api/studio`;
+
+// Import a .docx into SFDT by talking to the authoritative ASP.NET
+// Core DocumentEditor controller. Two call shapes are accepted:
+//   - { file }    (upload flow): browser File -> multipart -> Import
+//   - { url }     (open-existing flow): absolute docxUrl ->
+//     JSON { fileUrl } -> ImportFileURL
 export async function fetchSfdtFromDocx({ file, url, name }) {
   if (file) {
-    // Upload flow: post the browser File as multipart/form-data.
     const baseName = (name || file.name || 'template').replace(/\.docx$/i, '').trim();
     const fd = new FormData();
     fd.append('docx', file, file.name || 'template.docx');
@@ -31,19 +50,6 @@ export async function fetchSfdtFromDocx({ file, url, name }) {
   }
 
   if (url) {
-    // Open-existing flow: let the .NET service resolve the URL from
-    // its own wwwroot/Templates/ folder. The .NET controller's
-    // `FileUrlInfo` body only carries `fileUrl`, so the request shape
-    // is just `{ fileUrl }` — no `FileName` is needed (the Save round
-    // trip derives its own slug from `template.docxUrl` at write time).
-    //
-    // Cache-busting is appended to the URL we hand to the server: the
-    // .NET service uses WebClient.DownloadData underneath, which is
-    // process-local and not cached, but the query string also dodges
-    // any front-of-house proxy cache between the React origin and the
-    // .NET service (a real concern in a multi-machine deployment).
-    //const cacheBustUrl = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now().toString(36);
-
     const res = await fetch(DOC_EDITOR_IMPORT_FILE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json;charset=UTF-8' },
@@ -64,9 +70,6 @@ export async function fetchSfdtFromDocx({ file, url, name }) {
 
   throw new Error('fetchSfdtFromDocx: file or url required');
 }
-
-
-const DOC_EDITOR_SAVE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/Save`;
 
 function stripDocxExtension(name) {
   if (!name) return 'Document';
@@ -98,8 +101,6 @@ export async function saveTemplateToServer({ sfdtContent, documentName, format =
   return { ok: true, fileName, format };
 }
 
-const DOC_EDITOR_MAILMERGE_URL = `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/MailMerge`;
-
 export async function mailMergePreview({ fileName, documentData, mailMergeData }) {
   if (typeof documentData !== 'string' || documentData.length === 0) {
     throw new Error('mailMergePreview: documentData (base64) is required');
@@ -121,12 +122,10 @@ export async function mailMergePreview({ fileName, documentData, mailMergeData }
     body: JSON.stringify(payload),
   });
   if (res.status === 200) {
-    // Backend returns the merged document as a SFDT JSON string body.
     const sfdt = await res.text();
     if (!sfdt) throw new Error('Mail merge returned an empty document.');
     return sfdt;
   }
-  // Non-200: surface a readable error to the caller.
   let detail = '';
   try { detail = await res.text(); } catch { /* ignore */ }
   throw new Error(
@@ -134,6 +133,9 @@ export async function mailMergePreview({ fileName, documentData, mailMergeData }
   );
 }
 
+// Read a Blob (from documentEditor.saveAsBlob('Docx')) as a base64 Data
+// URL string. Mirrors the FileReader.readAsDataURL pattern in the
+// Syncfusion sample.
 export function readBlobAsDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -143,155 +145,162 @@ export function readBlobAsDataUrl(blob) {
   });
 }
 
-export async function addCommonMergeField(key) {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/merge-fields/common`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ key }),
-    },
-  );
+// ---------------------------------------------------------------------------
+// Server-side catalog + common-fields API.
+//
+// The catalog file is now maintained by the ASP.NET Core service in
+// wwwroot/Data/templates.json (and common-merge-fields.json next to it).
+// The client fetches it on startup, persists changes back via PUT, and
+// delegates file uploads to POST /api/studio/upload so the .docx + the
+// catalog entry are written in one server-side transaction.
+// ---------------------------------------------------------------------------
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      error.message || `Failed to add common merge field (${response.status})`,
-    );
+// Fetch the full template catalog. Returns [] when the server is down
+// or the file is missing.
+export async function fetchTemplatesCatalog() {
+  try {
+    const res = await fetch(`${STUDIO_API}/catalog`);
+    if (!res.ok) return [];
+    const json = await res.json();
+    if (!Array.isArray(json)) return [];
+    return json;
+  } catch {
+    return [];
   }
-
-  return response.json();
 }
 
-export async function addTemplateMergeField(templateId, key) {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/templates/${encodeURIComponent(templateId)}/merge-fields`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ key }),
-    },
-  );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      error.message || `Failed to add template merge field (${response.status})`,
-    );
-  }
-
-  return response.json();
+// Persist the client's template collection back to disk. The server
+// is authoritative — it writes wwwroot/Data/templates.json verbatim.
+export async function saveTemplatesCatalog(catalog) {
+  const res = await fetch(`${STUDIO_API}/catalog`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(catalog),
+  });
+  if (!res.ok) throw new Error(`Catalog save failed (${res.status})`);
+  return res.json();
 }
 
+// Upload a new .docx template to the server. The server writes the
+// file to wwwroot/Templates/<slug>.docx AND appends a new entry to
+// wwwroot/Data/templates.json. Returns { entry, docxFileName }.
+export async function uploadTemplate({ file, name, type, description }) {
+  const fd = new FormData();
+  fd.append('file', file, file.name || 'template.docx');
+  if (name) fd.append('name', name);
+  if (type) fd.append('type', type);
+  if (description) fd.append('description', description);
+  const res = await fetch(`${STUDIO_API}/upload`, {
+    method: 'POST',
+    body: fd,
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = await res.text(); } catch { /* ignore */ }
+    throw new Error(
+      `Upload failed (${res.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`,
+    );
+  }
+  return res.json();
+}
+
+// Ask the server to remove a template's catalog entry. The .docx file
+// is intentionally left in place (orphan) — the catalog is the single
+// source of truth for the UI.
+export async function deleteTemplate(id) {
+  const res = await fetch(`${STUDIO_API}/template/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok && res.status !== 404) {
+    let detail = '';
+    try { detail = await res.text(); } catch { /* ignore */ }
+    throw new Error(
+      `Delete failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`,
+    );
+  }
+  return res.json().catch(() => ({ ok: true }));
+}
+
+// ---------------------------------------------------------------------------
+// Hidden built-in templates.
+//
+// Deleting a built-in template is a client-side hide: the .docx stays
+// on the server and the entry stays in the catalog file. We record the
+// hidden ids in window.localStorage so the UI hides them on next load.
+// ---------------------------------------------------------------------------
+const HIDDEN_BUILTINS_KEY = 'studio.hiddenBuiltInTemplates';
+
+function readHiddenBuiltIns() {
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_BUILTINS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v) => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function writeHiddenBuiltIns(ids) {
+  try {
+    window.localStorage.setItem(HIDDEN_BUILTINS_KEY, JSON.stringify(ids));
+  } catch {
+    // Best-effort.
+  }
+}
+
+export function getHiddenBuiltInIds() {
+  return readHiddenBuiltIns();
+}
+
+export function hideBuiltInTemplate(id) {
+  const current = readHiddenBuiltIns();
+  if (current.includes(id)) return current;
+  const next = [...current, id];
+  writeHiddenBuiltIns(next);
+  return next;
+}
+
+// POST a custom merge field to the server's StudioController. The
+// server writes to common-merge-fields.json (common scope) or updates
+// the matching catalog entry's fieldKeys (template scope).
+export async function addCustomMergeField({
+  scope,
+  templateId,
+  templateName,
+  templateType,
+  templateDescription,
+  key,
+}) {
+  const fd = new FormData();
+  fd.append('scope', scope);
+  if (templateId) fd.append('templateId', templateId);
+  if (templateName) fd.append('templateName', templateName);
+  if (templateType) fd.append('templateType', templateType);
+  if (templateDescription) fd.append('templateDescription', templateDescription);
+  fd.append('key', key);
+  const res = await fetch(`${STUDIO_API}/mergefield`, {
+    method: 'POST',
+    body: fd,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Add field failed (${res.status})`);
+  }
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || 'Add field failed');
+  return json;
+}
+
+// GET the common (global) custom merge-field catalog from the server.
 export async function fetchCommonMergeFields() {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/merge-fields/common`,
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to load common merge fields (${response.status})`,
-    );
-  }
-
-  const keys = await response.json();
-
-  return Object.fromEntries(
-    (Array.isArray(keys) ? keys : []).map((key) => [key, true]),
-  );
-}
-
-export async function createTemplate(template) {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/templates`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(template),
-    },
-  );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-
-    throw new Error(
-      error.message ||
-        `Failed to create template (${response.status})`,
-    );
-  }
-
-  return response.json();
-}
-
-export async function fetchTemplates() {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/templates`,
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to load templates (${response.status})`,
-    );
-  }
-
-  return response.json();
-}
-
-export async function fetchTemplate(templateId) {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/templates/${encodeURIComponent(templateId)}`,
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to load template (${response.status})`,
-    );
-  }
-
-  return response.json();
-}
-
-export async function updateTemplate(templateId, data) {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/templates/${encodeURIComponent(templateId)}`,
-    {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    },
-  );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      error.message || `Failed to update template (${response.status})`,
-    );
-  }
-
-  return response.json();
-}
-
-export async function deleteTemplate(templateId) {
-  const response = await fetch(
-    `${API}/api/TemplateStudio/templates/${encodeURIComponent(templateId)}`,
-    {
-      method: 'DELETE',
-    },
-  );
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      error.message || `Failed to delete template (${response.status})`,
-    );
+  try {
+    const res = await fetch(`${STUDIO_API}/common-fields`);
+    if (!res.ok) return {};
+    const json = await res.json();
+    return json.fields || {};
+  } catch {
+    return {};
   }
 }
-

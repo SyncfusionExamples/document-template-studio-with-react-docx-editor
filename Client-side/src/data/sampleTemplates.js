@@ -10,9 +10,7 @@
 // listening on http://localhost:5212/. Every cross-origin call from the
 // React app — including the editor's own Import/Save/MailMerge path —
 // targets `${DOCUMENT_EDITOR_BASE_URL}/api/DocumentEditor/`.
-export const DOCUMENT_EDITOR_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  (import.meta.env.DEV ? 'http://localhost:5212' : '');
+export const DOCUMENT_EDITOR_BASE_URL = 'http://localhost:5212';
 
 // Full Service URL the Syncfusion DocumentEditor container needs in its
 // `serviceUrl` prop (note trailing slash — that's what the editor expects).
@@ -58,16 +56,13 @@ export const MERGE_FIELDS = {
   OrgEmail: true,
 };
 
-// All built-in .docx templates live exclusively on the server under
-// Server-side/wwwroot/Templates/ and are served via
-// `app.UseStaticFiles()`. The catalog (id, name, type, description,
-// fieldKeys, docxUrl, thumbnailUrl) is owned by the .NET service and
-// exposed at `${DOCUMENT_EDITOR_BASE_URL}/api/TemplateStudio/templates`
-// — the React app does NOT import a local templates.json anymore
-// (a previous version of this file did; the JSON was deleted when the
-// server became the single source of truth). Thumbnails for every
-// .docx-based template are generated client-side from the .docx —
-// no per-type SVG art is used anywhere.
+// All built-in .docx templates live on the server under
+// Server-side/wwwroot/Templates/ and are served via `app.UseStaticFiles()`.
+// The single client-side catalog (src/data/templates.json) maps each
+// template's id, name, type, description, and fieldKeys to the URL where
+// the .docx can be fetched from. Thumbnails for every .docx-based
+// template are generated client-side from the .docx — no per-type SVG
+// art is used anywhere.
 
 // Seeded merge fields for "+ New Template". The document body is always
 // blank when a new template is created — only its merge-field catalog is
