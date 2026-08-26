@@ -3,6 +3,41 @@ import { ButtonComponent } from '@syncfusion/ej2-react-buttons';
 import { MERGE_FIELDS } from '../data/sampleTemplates.js';
 import { addCustomMergeField } from '../utils/studioStorage.js';
 
+// Single source of truth for the MIME type we put on dataTransfer so the
+// editor's drop handler can unambiguously tell a merge-field chip apart
+// from a plain text drag (or a tab/header reorder). Both this and the
+// callback below are read by TemplateViewer when parsing the dropped
+// payload.
+export const MERGE_FIELD_MIME = 'application/x-ts-mergefield';
+export const MERGE_FIELD_PAYLOAD_MIME = 'application/json';
+
+// Build a custom drag image that mirrors the chip layout (so the user
+// sees a small floating « FieldName » ghost following the cursor).
+// Returns an opaque wrapper element composed in JS — kept off-DOM
+// (zero reflow cost) until dragend clears it. We use the same
+// .ts-field-chip-label styling that the real chip uses so the ghost
+// looks identical at a glance.
+function buildDragGhost(key) {
+  const ghost = document.createElement('div');
+  ghost.className = 'ts-drag-ghost';
+  // Same chrome as .ts-field-chip + the »« display field text the
+  // editor will render after insertion. Positioned off-screen so the
+  // ghost never flashes into the layout during setDragImage.
+  ghost.style.position = 'fixed';
+  ghost.style.top = '-9999px';
+  ghost.style.left = '-9999px';
+  ghost.style.zIndex = '2147483647';
+  const label = document.createElement('span');
+  label.className = 'ts-drag-ghost-label';
+  // Show the display form (matching the editor's MERGEFIELD result
+  // text) instead of the raw field name to make it obvious what the
+  // drop will insert.
+  label.textContent = `\u00ab ${key} \u00bb`;
+  ghost.appendChild(label);
+  document.body.appendChild(ghost);
+  return ghost;
+}
+
 // Build a flat list of field descriptors for the currently selected template.
 // Each field is just its `FieldName`. `customMap` (optional) augments the
 // base MERGE_FIELDS catalog with template-scoped + common custom fields
@@ -18,7 +53,20 @@ import { addCustomMergeField } from '../utils/studioStorage.js';
 // only appear in a template's panel after the user explicitly added it
 // at "template" scope for that template. We union fieldKeys with the
 // commonFieldsProp so every global field is available everywhere.
-function listFields(fieldKeys, customMap, commonFieldsProp) {
+//
+// The third input source is `documentMergeFields`: the live set of
+// MERGEFIELDs the Server-side DocumentEditorController.ImportFileURL
+// Web API reported for the currently-loaded .docx. These are
+// insertion-only fields — the .docx references them but the template's
+// own `fieldKeys` (or common-merge-fields catalog) haven't necessarily
+// claimed them yet. The panel lists them so the user can click → insert
+// without first having to add the field to the template's catalog. We
+// deliberately do NOT write them back into `fieldKeys` — the catalog
+// stays the single source of truth for what fields "belong" to a
+// template, and the doc-only fields are surfaced purely for chip-list
+// convenience. De-duplication across all three sources is handled by
+// the same `seen` Set regardless of where the key comes from.
+function listFields(fieldKeys, customMap, commonFieldsProp, documentMergeFields) {
   const out = [];
   const seen = new Set();
   const push = (k) => {
@@ -45,6 +93,16 @@ function listFields(fieldKeys, customMap, commonFieldsProp) {
     // precedence in the UI), and skip unknown common-field keys.
     push(k);
   }
+  // Doc-only merge fields reported by ImportFileURL — these are
+  // MERGEFIELDs that exist in the loaded .docx but aren't yet in
+  // `fieldKeys` or commonFields. They're shown for convenience only:
+  // the user can click to insert (the editor already knows the field
+  // name), but they aren't promoted into the template catalog here.
+  // We append them last so the template/common keys always sort first.
+  for (const k of (documentMergeFields || [])) {
+    if (!k) continue;
+    push(k);
+  }
   return out;
 }
 
@@ -61,12 +119,18 @@ function MergeFieldsPanel({
   customFieldMap,
   onCustomFieldAdded,
   commonFieldsProp = {},
+  // Doc-only MERGEFIELDs returned by
+  // DocumentEditorController.ImportFileURL. Array of field-name strings;
+  // unioned into the chip list alongside `template.fieldKeys` and
+  // `commonFieldsProp`. Defaults to [] so older callers (and the blank
+  // "+ New Template" flow) still work.
+  documentMergeFields = [],
 }) {
   const fields = useMemo(
     () => (template
-      ? listFields(template.fieldKeys, customFieldMap, commonFieldsProp)
+      ? listFields(template.fieldKeys, customFieldMap, commonFieldsProp, documentMergeFields)
       : []),
-    [template, customFieldMap, commonFieldsProp],
+    [template, customFieldMap, commonFieldsProp, documentMergeFields],
   );
 
   // ----- Add-Field dialog state -----
@@ -98,6 +162,57 @@ function MergeFieldsPanel({
       return 'Field Name must start with a letter and contain only letters/digits.';
     }
     return '';
+  };
+
+  // ----- Drag-and-drop to the editor -----
+  // The chip is both click-insertable (default behaviour on click) AND
+  // HTML5-draggable into the DocumentEditor canvas on the left.
+  // onDragStart: stash the field key under two MIME types so editors
+  // (and our own drop target) can both recognise it:
+  //   - MERGE_FIELD_MIME for the editor's specific drop handler
+  //   - text/plain as a fallback for browsers that always expose that
+  //     type but not custom MIME types
+  //   - MERGE_FIELD_PAYLOAD_MIME for a JSON envelope that includes
+  //     the source so the editor can refuse drops it did not initiate
+  // We also create a custom ghost via setDragImage so the user sees a
+  // "« FieldName »" pill following the cursor instead of the default
+  // browser ghost. The element is removed on dragend to keep the DOM
+  // clean.
+  const handleChipDragStart = (e, k) => {
+    if (!e || !e.dataTransfer) return;
+    try {
+      e.dataTransfer.setData(MERGE_FIELD_MIME, k);
+      e.dataTransfer.setData('text/plain', k);
+      e.dataTransfer.setData(
+        MERGE_FIELD_PAYLOAD_MIME,
+        JSON.stringify({ source: 'merge-fields-panel', key: k }),
+      );
+      e.dataTransfer.effectAllowed = 'copy';
+      const ghost = buildDragGhost(k);
+      // Offset so the cursor sits over the centre of the ghost pill.
+      try {
+        e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, ghost.offsetHeight / 2);
+      } catch {
+        // Some browsers throw if setDragImage is called outside an
+        // active drag — safe to ignore; the default ghost takes over.
+      }
+      // Stash the ghost on the event so dragend (or unmount) can
+      // remove it deterministically.
+      e.currentTarget.__tsDragGhost = ghost;
+    } catch {
+      // dataTransfer not writeable for some reason — still allow the
+      // native click behaviour.
+    }
+  };
+
+  const handleChipDragEnd = (e) => {
+    const ghost = e?.currentTarget?.__tsDragGhost;
+    if (ghost && ghost.parentNode) {
+      ghost.parentNode.removeChild(ghost);
+    }
+    if (e?.currentTarget) {
+      e.currentTarget.__tsDragGhost = null;
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -160,17 +275,27 @@ function MergeFieldsPanel({
 
       {template && (
         <p className="ts-fields-hint">
-          Click a field to insert it at the caret.
+          Click a field to insert at the caret, or drag it into the document.
         </p>
       )}
 
       {template && (
         <div className="ts-fields-groups">
                 {fields.map((f) => (
-                  <li key={f.key}>
+                  // The <li> is the draggable handle — placing
+                  // draggable on the <li> (not on the inner Syncfusion
+                  // ButtonComponent) avoids the React-19 re-render
+                  // wiping out the drag image in the middle of a drag.
+                  <li
+                    key={f.key}
+                    className="ts-field-chip-li"
+                    draggable
+                    onDragStart={(e) => handleChipDragStart(e, f.key)}
+                    onDragEnd={handleChipDragEnd}
+                  >
                     <ButtonComponent
                       cssClass="e-block ts-field-chip"
-                      title={`Insert ${f.key}`}
+                      title={`Insert ${f.key} — drag to drop into document`}
                       onClick={() => onInsertField(f.key)}
                     >
                       <span className="ts-field-chip-label">{f.key}</span>

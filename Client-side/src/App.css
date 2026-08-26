@@ -864,6 +864,48 @@
 }
 
 /* =====================================================================
+   Drag-and-drop support: chip → DocumentEditor canvas.
+   ===================================================================== */
+.ts-field-chip-li {
+  list-style: none;
+  margin-bottom: 6px;
+  cursor: grab;
+}
+.ts-field-chip-li:active {
+  cursor: grabbing;
+}
+.ts-field-chip-li .ts-field-chip.e-btn {
+  width: 100%;
+}
+.ts-drag-ghost {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: #3d5afe;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(61, 90, 254, 0.35);
+  white-space: nowrap;
+  pointer-events: none;
+  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+.ts-drag-ghost-label {
+  display: inline-block;
+  line-height: 1;
+}
+.ts-viewer-canvas {
+  position: relative;
+}
+.ts-viewer-canvas--drag-over {
+  outline: 2px dashed #3d5afe;
+  outline-offset: -6px;
+  background-color: rgba(61, 90, 254, 0.05);
+  transition: outline-color 0.12s, background-color 0.12s;
+}
+
+/* =====================================================================
    Add Field footer + dialog
    The footer sticks to the bottom of the side panel; the dialog is a
    modal overlay rendered inside the .ts-fields-panel.
