@@ -66,16 +66,39 @@ namespace DocumentTemplateStudioService.Controllers
         [HttpPost]
         [EnableCors("AllowAllOrigins")]
         [Route("ImportFileURL")]
-        public string ImportFileURL([FromBody] FileUrlInfo param)
+        public object ImportFileURL([FromBody] FileUrlInfo param)
         {
             using (WebClient client = new WebClient())
             {
                 MemoryStream stream = new MemoryStream(client.DownloadData(param.fileUrl));
+                // Use Syncfusion DocIO (WDocument) to enumerate the merge
+                // field names actually present in the .docx. This gives the
+                // client a list of every MERGEFIELD referenced in the
+                // document body, which the React MergeFieldsPanel unions
+                // with `template.fieldKeys` and the common-merge-fields
+                // catalog to surface fields that exist in the file but
+                // aren't yet part of the template's own catalog. The list
+                // is returned alongside the SFDT (NOT merged into
+                // `fieldKeys` server-side) — the template catalog remains
+                // the single source of truth for which fields "belong" to
+                // a template, and the panel just lists any extras for
+                // insertion only.
+                WDocument docxDoc = new WDocument(stream, WFormatType.Docx);
+                string[] mergeFieldNames = docxDoc.MailMerge.GetMergeFieldNames() ?? new string[0];
+                docxDoc.Close();
+
+                // Rewind the same memory stream and load as the EJ2
+                // DocumentEditor WordDocument so we can serialize to SFDT
+                // JSON for the client. The two-step load (DocIO first for
+                // MailMerge, EJ2 second for SFDT) avoids a separate
+                // download/round-trip and keeps the response payload
+                // self-contained.
+                stream.Position = 0;
                 WordDocument document = WordDocument.Load(stream, FormatType.Docx);
                 string json = Newtonsoft.Json.JsonConvert.SerializeObject(document);
                 document.Dispose();
                 stream.Dispose();
-                return json;
+                return new { sfdt = json, mergeFields = mergeFieldNames };
             }
         }
         public class FileUrlInfo

@@ -7,7 +7,7 @@ import {
 import { ButtonComponent } from '@syncfusion/ej2-react-buttons';
 import { MERGE_FIELDS, DOCUMENT_EDITOR_SERVICE_URL } from '../data/sampleTemplates.js';
 import { fetchSfdtFromDocx, saveTemplateToServer, mailMergePreview, readBlobAsDataUrl } from '../utils/studioStorage.js';
-import MergeFieldsPanel from './MergeFieldsPanel.jsx';
+import MergeFieldsPanel, { MERGE_FIELD_MIME, MERGE_FIELD_PAYLOAD_MIME } from './MergeFieldsPanel.jsx';
 
 // Capture page 1 of the LIVE DocumentEditor as a `data:image/png;base64,...`
 // data URI. We do NOT spin up a second offscreen editor — the
@@ -181,7 +181,7 @@ function TemplateViewer({
     if (uploadedFile && !tpl.docxUrl) {
       const baseName = (tpl.name || '').replace(/\.docx$/i, '').trim();
       try {
-        const sfdt = await fetchSfdtFromDocx({ file: uploadedFile, name: baseName });
+        const { sfdt } = await fetchSfdtFromDocx({ file: uploadedFile, name: baseName });
         de.open(sfdt);
         await initializeUploadedTemplate(de, tpl);
         isLoadingRef.current = false;
@@ -196,7 +196,17 @@ function TemplateViewer({
     if (tpl.docxUrl) {
       const baseName = (tpl.name || '').replace(/\.docx$/i, '').trim();
       try {
-        const sfdt = await fetchSfdtFromDocx({ url: tpl.docxUrl, name: baseName });
+        // ImportFileURL now returns { sfdt, mergeFields } — `sfdt` is
+        // what `de.open()` consumes; `mergeFields` is the live list of
+        // MERGEFIELDs present in the .docx (extracted server-side via
+        // DocIO.MailMerge.GetMergeFieldNames). We push that list into
+        // local state so MergeFieldsPanel can show any doc-only fields
+        // (ones the .docx references but that aren't yet in
+        // template.fieldKeys or commonFields). Note: we deliberately do
+        // NOT mutate `template.fieldKeys` here — the panel is the
+        // display surface, the catalog stays the source of truth.
+        const { sfdt, mergeFields } = await fetchSfdtFromDocx({ url: tpl.docxUrl, name: baseName });
+        setDocumentMergeFields(Array.isArray(mergeFields) ? mergeFields : []);
         de.open(sfdt);
         isLoadingRef.current = false;
         // If the template was just uploaded we still want to capture a
@@ -290,6 +300,18 @@ function TemplateViewer({
   // App and forwarded down as a prop so the same source of truth is
   // shared across every TemplateViewer.
   const [customFieldMap, setCustomFieldMap] = useState({});
+  // Doc-only MERGEFIELDs returned by Server-side
+  // DocumentEditorController.ImportFileURL for the currently-loaded
+  // .docx. This is the live set of field names actually present in the
+  // document body — including ones the .docx references but that
+  // haven't (yet) been claimed by `template.fieldKeys` or the common
+  // merge-fields catalog. The MergeFieldsPanel uses this (alongside
+  // template.fieldKeys + commonFieldsProp) to render the right-rail
+  // chip list, so doc-only fields stay clickable for insertion
+  // without polluting the template's `fieldKeys`. Reset on
+  // template.id change so each template starts with its own freshly
+  // fetched doc-only list and doesn't inherit a previous template's.
+  const [documentMergeFields, setDocumentMergeFields] = useState([]);
   // Reset session-added custom fields whenever the template changes.
   useEffect(() => {
     // Seed the customFieldMap from the template's fieldKeys: any key not
@@ -301,6 +323,11 @@ function TemplateViewer({
       if (!MERGE_FIELDS[k]) seed[k] = true;
     }
     setCustomFieldMap({ ...seed });
+    // Drop the prior template's doc-only field list so it doesn't leak
+    // into the next template's panel before ImportFileURL fills it back
+    // in. Explicit [] (not null) so the panel's default-prop path is
+    // taken until the fetch resolves.
+    setDocumentMergeFields([]);
   }, [template?.id, template?.fieldKeys]);
 
   // Callback fired by MergeFieldsPanel when a new field was successfully
@@ -383,6 +410,210 @@ function TemplateViewer({
     const de = inst.documentEditor;
     de.focusIn();
     de.editor.insertField(fieldCode, "«" + fieldName + "»" );
+  };
+
+  // -------- Drag-and-drop from MergeFieldsPanel into the editor --------
+  // The MergeFieldsPanel chips publish their field name on dataTransfer
+  // under two MIME types (MERGE_FIELD_MIME + text/plain + a JSON
+  // payload MIME — see MergeFieldsPanel.jsx for the full rationale).
+  // Reader order below is: the strongly-typed JSON envelope first
+  // (so we can detect a payload we didn't author and bail), then the
+  // dedicated MIME, then text/plain as a final fallback.
+  //
+  // The drop target is .ts-viewer-canvas ONLY — not the panel, header,
+  // toolbar, ribbons or footer. Syncfusion's editor DOM swallows its
+  // own dragover events, so we attach the preventDefault on the
+  // wrapper above the editor's own element. The wrapper itself never
+  // sees file drops from the OS because e.preventDefault() + a
+  // dedicated dragOver visual cue is all we use.
+  //
+  // isDragOver state switches a CSS class on the wrapper so the user
+  // gets visual feedback (a highlighted ring) when their pointer is
+  // over a valid drop zone. Inside .ts-fields-panel or anywhere else
+  // outside the wrapper, we never preventDefault → the browser shows
+  // a "no-drop" cursor and nothing happens.
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
+  // Tracks whether the most recently started drag was a merge-field
+  // drag (vs. e.g. a text drag inside the editor, or a file
+  // drag-and-drop from the OS). We use the dedicated MIME presence on
+  // dataTransfer.types rather than types.includes() because some
+  // browsers omit custom types from the array on dragstart.
+  function isMergeFieldDrag(dt) {
+    if (!dt || !dt.types) return false;
+    const types = Array.from(dt.types);
+    return types.includes(MERGE_FIELD_MIME)
+      || types.includes(MERGE_FIELD_PAYLOAD_MIME);
+  }
+  function readMergeFieldKey(dt) {
+    if (!dt) return null;
+    // Prefer the JSON envelope so a foreign "ours-looking" drop
+    // (e.g. the browser auto-fills text/plain first) can never insert
+    // an unexpected value.
+    try {
+      const envelope = dt.getData(MERGE_FIELD_PAYLOAD_MIME);
+      if (envelope) {
+        const parsed = JSON.parse(envelope);
+        if (parsed && parsed.source === 'merge-fields-panel' && typeof parsed.key === 'string') {
+          return parsed.key;
+        }
+      }
+    } catch {
+      // fall through
+    }
+    const dedicated = dt.getData(MERGE_FIELD_MIME);
+    if (dedicated) return dedicated;
+    // Last resort: text/plain. Only trust if it ALSO carries at least
+    // one of our MIME types — otherwise don't insert arbitrary text.
+    if (isMergeFieldDrag(dt)) return dt.getData('text/plain');
+    return null;
+  }
+
+  const handleCanvasDragEnter = (e) => {
+    if (!isMergeFieldDrag(e.dataTransfer)) return;
+    e.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragOver(true);
+  };
+  const handleCanvasDragOver = (e) => {
+    if (!isMergeFieldDrag(e.dataTransfer)) return;
+    // preventDefault marks this element as a valid drop target.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+  const handleCanvasDragLeave = (e) => {
+    if (!isMergeFieldDrag(e.dataTransfer)) return;
+    // Decrement depth on each leave; only clear the highlight when
+    // every nested enter has been balanced by a leave — otherwise
+    // entering a child element can falsely toggle the overlay off.
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragOver(false);
+  };
+  const handleCanvasDrop = (e) => {
+    if (!isMergeFieldDrag(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = 0;
+    setIsDragOver(false);
+    const key = readMergeFieldKey(e.dataTransfer);
+    if (!key) return;
+    try {
+      const inst = editorRef.current;
+      const de = inst && inst.documentEditor;
+      if (de && typeof de.focusIn === 'function') de.focusIn();
+      if (de && de.selection && typeof de.selection.select === 'function') {
+        const rootEl = inst && inst.element;
+        const dropX = e.clientX;
+        const dropY = e.clientY;
+        let viewer = null;
+        if (rootEl) {
+          const candidates = [
+            '.e-de-viewer',
+            '.e-de-page-content',
+            '.e-de-page-container',
+            '.e-de-scroll-container',
+            '.e-documenteditor',
+            '.e-documenteditor-content',
+            '.e-documenteditor-container',
+          ];
+          for (let i = 0; i < candidates.length; i += 1) {
+            const el = rootEl.querySelector
+              ? rootEl.querySelector(candidates[i])
+              : null;
+            if (!el || !el.getBoundingClientRect) continue;
+            const r = el.getBoundingClientRect();
+            if (
+              r.width > 0 &&
+              r.height > 0 &&
+              dropX >= r.left &&
+              dropX <= r.right &&
+              dropY >= r.top &&
+              dropY <= r.bottom
+            ) {
+              viewer = el;
+              break;
+            }
+          }
+          // Fallback: largest non-zero rect that contains the drop
+          // point. This catches unmapped version renames like
+          // `.e-docie-viewer-content`.
+          if (!viewer) {
+            const all = rootEl.querySelectorAll
+              ? rootEl.querySelectorAll('*')
+              : [];
+            let bestArea = -1;
+            for (let i = 0; i < all.length; i += 1) {
+              const el = all[i];
+              if (!el || !el.getBoundingClientRect) continue;
+              const r = el.getBoundingClientRect();
+              if (
+                r.width > 0 &&
+                r.height > 0 &&
+                dropX >= r.left &&
+                dropX <= r.right &&
+                dropY >= r.top &&
+                dropY <= r.bottom
+              ) {
+                const area = r.width * r.height;
+                if (area > bestArea) {
+                  bestArea = area;
+                  viewer = el;
+                }
+              }
+            }
+          }
+          // Final fallback: clamp to rootEl rect so something always
+          // happens, even on minimum installs.
+          if (!viewer) viewer = rootEl;
+        }
+        if (viewer && viewer.getBoundingClientRect) {
+          const rect = viewer.getBoundingClientRect();
+          // Translate to viewer-local coordinates the way the
+          // reference sample expects (matches e.offsetX/Y behaviour
+          // when the listener is on the same node).
+          const localX = dropX - rect.left;
+          const localY = dropY - rect.top;
+          // selection.select interprets x/y in the editor's page
+          // (unscrolled) coordinate space, NOT the viewport, so the
+          // viewer's scroll offsets must be added back. Syncfusion
+          // has multiple scroll layers; pick the first non-zero one.
+          let sLeft = 0;
+          let sTop = 0;
+          try {
+            if (typeof viewer.scrollLeft === 'number' && viewer.scrollLeft !== 0) {
+              sLeft = viewer.scrollLeft;
+            } else {
+              let p = viewer.parentElement;
+              while (p && !(p.scrollLeft || p.scrollTop)) {
+                p = p.parentElement;
+              }
+              if (p) {
+                sLeft = p.scrollLeft || 0;
+                sTop = p.scrollTop || 0;
+              }
+            }
+          } catch { /* ignore */ }
+          const finalX = Math.max(0, localX + sLeft);
+          const finalY = Math.max(0, localY + sTop);
+          de.selection.select({
+            x: finalX,
+            y: finalY,
+            extend: false,
+          });
+        }
+      }
+    } catch (selErr) {
+      // selection.select is best-effort; insertField below still
+      // honours the editor's existing caret as a fallback.
+      // eslint-disable-next-line no-console
+      console.warn('Drop caret placement failed; using existing caret:', selErr);
+    }
+    try {
+      insertField(key);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Drop-insert failed:', err);
+    }
   };
 
   // Save the document via the backend's DocumentEditorController.Save endpoint.
@@ -841,7 +1072,13 @@ function TemplateViewer({
           columns (see .ts-viewer grid layout in App.css), giving the
           ts-header the visual width of the editor + panel combined. */}
       <div className="ts-viewer-body">
-        <div className="ts-viewer-canvas">
+        <div
+          className={`ts-viewer-canvas${isDragOver ? ' ts-viewer-canvas--drag-over' : ''}`}
+          onDragEnter={handleCanvasDragEnter}
+          onDragOver={handleCanvasDragOver}
+          onDragLeave={handleCanvasDragLeave}
+          onDrop={handleCanvasDrop}
+        >
           {/* Syncfusion DocumentEditorContainer — built-in Word-like toolbar.
               The toolbar is enabled once at mount and stays mounted for the
               component lifetime; flipping enableToolbar on prop changes
@@ -877,6 +1114,7 @@ function TemplateViewer({
           customFieldMap={combinedCustomFields}
           onCustomFieldAdded={handleCustomFieldAdded}
           commonFieldsProp={commonFieldsProp}
+          documentMergeFields={documentMergeFields}
         />
       </div>
 

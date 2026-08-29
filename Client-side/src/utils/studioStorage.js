@@ -25,6 +25,18 @@ const STUDIO_API = `${DOCUMENT_EDITOR_BASE_URL}/api/studio`;
 //   - { file }    (upload flow): browser File -> multipart -> Import
 //   - { url }     (open-existing flow): absolute docxUrl ->
 //     JSON { fileUrl } -> ImportFileURL
+//
+// `ImportFileURL` has changed: instead of returning the SFDT as a raw
+// string the server now returns { sfdt, mergeFields } — the SFDT plus
+// the list of MERGEFIELD names actually present in the .docx. The SFDT
+// is what `de.open()` needs; `mergeFields` is forwarded to the
+// MergeFieldsPanel so any doc-only MERGEFIELDs (i.e. ones the .docx
+// references but that aren't in `template.fieldKeys` or the common
+// merge-field catalog) still appear in the right-rail chip list as
+// insertion-only entries. `Import` (the multipart upload endpoint) is
+// unchanged and still returns SFDT as a raw string — the helper below
+// normalises both shapes into a single `{ sfdt, mergeFields }` return
+// so callers don't need to special-case either path.
 export async function fetchSfdtFromDocx({ file, url, name }) {
   if (file) {
     const baseName = (name || file.name || 'template').replace(/\.docx$/i, '').trim();
@@ -46,7 +58,7 @@ export async function fetchSfdtFromDocx({ file, url, name }) {
     }
     const responseText = await res.text();
     if (!responseText) throw new Error('Import returned an empty document.');
-    return responseText;
+    return { sfdt: responseText, mergeFields: [] };
   }
 
   if (url) {
@@ -63,9 +75,23 @@ export async function fetchSfdtFromDocx({ file, url, name }) {
         `ImportFileURL failed (${res.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`,
       );
     }
-    const responseText = await res.text();
-    if (!responseText) throw new Error('ImportFileURL returned an empty document.');
-    return responseText;
+    // Parse the JSON envelope { sfdt, mergeFields }. Defensive: tolerate
+    // either a JSON envelope or a legacy plain-SFDT string so an older
+    // server doesn't break callers that expect the new shape.
+    const raw = await res.text();
+    if (!raw) throw new Error('ImportFileURL returned an empty document.');
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && typeof parsed.sfdt === 'string') {
+        return {
+          sfdt: parsed.sfdt,
+          mergeFields: Array.isArray(parsed.mergeFields) ? parsed.mergeFields : [],
+        };
+      }
+    } catch {
+      // not JSON — fall through to legacy plain-string handling
+    }
+    return { sfdt: raw, mergeFields: [] };
   }
 
   throw new Error('fetchSfdtFromDocx: file or url required');
